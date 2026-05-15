@@ -44,11 +44,9 @@ jobs:
           tag_name: ${{ steps.bump_version.outputs.new_tag }}
           name: Release ${{ steps.bump_version.outputs.new_tag }}
           body: |
-            <div align="center">
-              <img src="https://raw.githubusercontent.com/${{ github.repository }}/main/assets/github-logo-hexllama.png" alt="Hexllama Logo" width="200" />
-            </div>
+            ![Hexllama Logo](https://github.com/${{ github.repository }}/raw/main/assets/github-logo-hexllama.png)
 
-            ### Atualizações nesta versão:
+            ### What's Changed:
           draft: false
           prerelease: false
           generate_release_notes: true
