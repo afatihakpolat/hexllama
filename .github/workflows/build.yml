@@ -74,7 +74,7 @@ jobs:
         run: npm ci
 
       - name: Update version
-        run: npm version ${{ needs.create-release.outputs.tag_name }} --no-git-tag-version
+        run: npm version ${{ needs.create-release.outputs.tag_name }} --allow-same-version --no-git-tag-version || true
 
       - name: Build and Package
         run: npm run package
