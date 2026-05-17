@@ -2,13 +2,83 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { useStore, ModelFileInfo, ModelDownloadInfo } from '../store/useStore'
 import {
   HardDrive, Download, Trash, Pause, Play, X, Link, FolderOpen,
-  Pencil, Check, AlertCircle, Loader2, RefreshCw
+  Pencil, Check, AlertCircle, Loader2, RefreshCw, ChevronDown
 } from 'lucide-react'
+
+interface ModelFolderNode {
+  name: string
+  path: string
+  size: number
+  totalModels: number
+  models: ModelFileInfo[]
+  children: ModelFolderNode[]
+}
+
 function formatBytes(b: number) {
   if (!b) return '—'
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
   if (b < 1024 ** 3) return `${(b / 1024 ** 2).toFixed(1)} MB`
   return `${(b / 1024 ** 3).toFixed(2)} GB`
+}
+
+function createFolderNode(name: string, path: string): ModelFolderNode {
+  return {
+    name,
+    path,
+    size: 0,
+    totalModels: 0,
+    models: [],
+    children: []
+  }
+}
+
+function sortFolderTree(nodes: ModelFolderNode[]): ModelFolderNode[] {
+  return [...nodes]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((node) => ({
+      ...node,
+      models: [...node.models].sort((left, right) => left.name.localeCompare(right.name)),
+      children: sortFolderTree(node.children)
+    }))
+}
+
+function buildFolderTree(models: ModelFileInfo[]): ModelFolderNode[] {
+  const rootNodes: ModelFolderNode[] = []
+
+  for (const model of models) {
+    const segments = model.folder.split('/').filter(Boolean)
+    let currentLevel = rootNodes
+    let currentNode: ModelFolderNode | null = null
+    let currentPath = ''
+
+    for (const segment of segments) {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment
+
+      let nextNode = currentLevel.find((node) => node.name === segment)
+      if (!nextNode) {
+        nextNode = createFolderNode(segment, currentPath)
+        currentLevel.push(nextNode)
+      }
+
+      nextNode.size += model.size
+      nextNode.totalModels += 1
+      currentNode = nextNode
+      currentLevel = nextNode.children
+    }
+
+    if (!currentNode) {
+      currentNode = createFolderNode('Root', 'Root')
+      currentNode.size += model.size
+      currentNode.totalModels += 1
+      currentNode.models.push(model)
+      rootNodes.push(currentNode)
+      continue
+    }
+
+    currentNode.models.push(model)
+  }
+
+  return sortFolderTree(rootNodes)
 }
 function formatSpeed(bps?: number) {
   if (!bps) return ''
@@ -187,12 +257,14 @@ function ModelFileRow({ model, onDeleted }: { model: ModelFileInfo; onDeleted: (
     if (res.success) onDeleted()
     else alert('Delete failed: ' + res.error)
   }
+
   async function handleRename() {
     if (!newName.trim() || newName === model.name.replace(/\.[^.]+$/, '')) { setEditing(false); return }
     const res = await window.api.renameModel(model.path, newName.trim())
     if (res.success) { setEditing(false); onDeleted()  }
     else alert('Rename failed: ' + res.error)
   }
+
   return (
     <div className="models-file-row">
       <div className="models-file-icon"><HardDrive size={16} /></div>
@@ -207,7 +279,6 @@ function ModelFileRow({ model, onDeleted }: { model: ModelFileInfo; onDeleted: (
           <span className="models-file-name">{model.name}</span>
         )}
         <div className="models-file-sub">
-          <span className="models-folder-badge">{model.folder}</span>
           <span>{formatBytes(model.size)}</span>
         </div>
       </div>
@@ -219,10 +290,85 @@ function ModelFileRow({ model, onDeleted }: { model: ModelFileInfo; onDeleted: (
     </div>
   )
 }
+
+function FolderTreeSection({
+  node,
+  depth,
+  collapsedFolders,
+  onToggle,
+  onDeleted
+}: {
+  node: ModelFolderNode
+  depth: number
+  collapsedFolders: Record<string, boolean>
+  onToggle: (folderPath: string) => void
+  onDeleted: () => void
+}) {
+  const isCollapsed = collapsedFolders[node.path] !== false
+
+  return (
+    <div style={{ marginTop: depth === 0 ? 16 : 10, marginLeft: depth * 18 }}>
+      <button
+        type="button"
+        className="models-section-title"
+        onClick={() => onToggle(node.path)}
+        style={{
+          fontSize: 12,
+          marginBottom: isCollapsed ? 0 : 10,
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          background: 'transparent',
+          border: 0,
+          padding: 0,
+          cursor: 'pointer',
+          color: 'inherit'
+        }}
+        aria-expanded={!isCollapsed}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <FolderOpen size={13} />
+          <span>{node.name}</span>
+          <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
+            ({node.totalModels}) · {formatBytes(node.size)}
+          </span>
+        </span>
+        <ChevronDown
+          size={14}
+          style={{
+            transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+            transition: 'transform 0.18s ease'
+          }}
+        />
+      </button>
+      {!isCollapsed && (
+        <>
+          {node.children.map((child) => (
+            <FolderTreeSection
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+              collapsedFolders={collapsedFolders}
+              onToggle={onToggle}
+              onDeleted={onDeleted}
+            />
+          ))}
+          {node.models.map((model) => (
+            <ModelFileRow key={model.path} model={model} onDeleted={onDeleted} />
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function ModelsView() {
-  const { models, setModels, modelDownloads, upsertModelDownload } = useStore()
+  const { models, setModels, modelDownloads, upsertModelDownload, paths } = useStore()
   const [showUrlModal, setShowUrlModal] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({})
+
   const refresh = useCallback(async () => {
     setLoading(true)
     const m = await window.api.listModels()
@@ -237,8 +383,18 @@ export default function ModelsView() {
       list.forEach(dl => upsertModelDownload(dl))
     })
   }, [])
+
   const downloads = Object.values(modelDownloads)
   const activeDownloads = downloads.filter(d => d.phase !== 'cancelled')
+  const folderTree = buildFolderTree(models)
+
+  function toggleFolder(folder: string) {
+    setCollapsedFolders((current) => ({
+      ...current,
+      [folder]: current[folder] === undefined ? false : !current[folder]
+    }))
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -253,7 +409,7 @@ export default function ModelsView() {
           <button className="btn btn-ghost btn-icon" onClick={refresh} title="Refresh" disabled={loading}>
             <RefreshCw size={15} className={loading ? 'spin' : ''} />
           </button>
-          <button className="btn btn-secondary" onClick={() => window.api.openFolder('models')} >
+          <button className="btn btn-secondary" onClick={() => paths && window.api.openFolder(paths.models)} disabled={!paths} title={paths?.models}>
             <FolderOpen size={15} /> Open Folder
           </button>
           <button className="btn btn-primary" onClick={() => setShowUrlModal(true)}>
@@ -261,7 +417,7 @@ export default function ModelsView() {
           </button>
         </div>
       </div>
-      {}
+
       {activeDownloads.length > 0 && (
         <div className="models-section">
           <div className="models-section-title">
@@ -270,7 +426,7 @@ export default function ModelsView() {
           {activeDownloads.map(dl => <DownloadRow key={dl.id} dl={dl} />)}
         </div>
       )}
-      {}
+
       <div className="models-section">
         <div className="models-section-title">
           <HardDrive size={13} /> Installed Models
@@ -290,8 +446,16 @@ export default function ModelsView() {
             </button>
           </div>
         )}
-        {models.map(m => (
-          <ModelFileRow key={m.path} model={m} onDeleted={refresh} />
+
+        {folderTree.map((node) => (
+          <FolderTreeSection
+            key={node.path}
+            node={node}
+            depth={0}
+            collapsedFolders={collapsedFolders}
+            onToggle={toggleFolder}
+            onDeleted={refresh}
+          />
         ))}
       </div>
       {showUrlModal && <UrlDownloadModal onClose={() => { setShowUrlModal(false); refresh() }} />}

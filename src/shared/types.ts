@@ -2,8 +2,12 @@ export interface ModelFile {
   name: string
   path: string
 }
+
+export type TemplateProvider = 'local' | 'litellm'
+
 export interface BackendVersion {
   name: string
+  displayName: string
   path: string
   hasCommands: boolean
   exe: string | null
@@ -35,14 +39,71 @@ export interface Template {
   id: string
   name: string
   description?: string
+  providerType?: TemplateProvider
   backendVersion?: string
   modelPath?: string
+  remoteModel?: string
   serverPort: number
   args: Record<string, string | number | boolean | null>
   launchMode?: 'chat' | 'api'
   createdAt: string
   updatedAt: string
   _file?: string
+}
+
+export interface LiteLlmSettingsSnapshot {
+  baseUrl: string
+  hasApiKey: boolean
+}
+
+export interface LiteLlmSettingsInput {
+  baseUrl: string
+  apiKey?: string
+  clearApiKey?: boolean
+}
+
+export type LiteLlmLogLevel = 'info' | 'debug' | 'detailed_debug'
+
+export interface LiteLlmManagerSettings {
+  host: string
+  port: number
+  configPath: string
+  logLevel: LiteLlmLogLevel
+}
+
+export interface LiteLlmManagerSettingsInput {
+  host: string
+  port: number
+  logLevel: LiteLlmLogLevel
+}
+
+export interface LiteLlmInstallStatus {
+  pythonCommand: string | null
+  pythonVersion: string | null
+  installed: boolean
+  currentVersion: string | null
+  latestVersion: string | null
+  hasUpdate: boolean
+  error?: string
+}
+
+export interface LiteLlmManagerSnapshot {
+  settings: LiteLlmManagerSettings
+  install: LiteLlmInstallStatus
+  running: boolean
+  pid: number | null
+  recentLogs: string[]
+  configText: string
+}
+
+export interface LiteLlmModelEntry {
+  id: string
+  label: string
+}
+
+export interface LiteLlmChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
 }
 export interface ReleaseInfo {
   tagName: string

@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, LiteLlmChatMessage, LiteLlmInstallStatus, LiteLlmManagerSettingsInput, LiteLlmManagerSnapshot, LiteLlmModelEntry, LiteLlmSettingsInput, LiteLlmSettingsSnapshot, ReleaseInfo } from '../../shared/types'
 interface ModelFileInfo {
   name: string
   path: string
@@ -22,7 +22,33 @@ interface HfModelResult {
   downloads: number; likes: number; tags: string[]; lastModified: string
 }
 interface HfFileResult { name: string; size: number; downloadUrl: string }
+interface AppPaths {
+  models: string
+  templates: string
+  backend: string
+}
+interface FilesystemSnapshot {
+  paths: AppPaths
+  models: ModelFileInfo[]
+  backends: BackendVersion[]
+}
+interface BackendSourceUpdateResult {
+  snapshot: FilesystemSnapshot
+  templates: Template[]
+  activeBackendName: string
+}
 interface LlamaCppApi {
+  getLiteLlmSettings: () => Promise<LiteLlmSettingsSnapshot>
+  getLiteLlmManager: () => Promise<LiteLlmManagerSnapshot>
+  saveLiteLlmManagerSettings: (settings: LiteLlmManagerSettingsInput) => Promise<{ success: true; snapshot: LiteLlmManagerSnapshot } | { success: false; error?: string }>
+  saveLiteLlmConfig: (configText: string) => Promise<{ success: true; snapshot: LiteLlmManagerSnapshot } | { success: false; error?: string }>
+  installLiteLlm: () => Promise<{ success: true; snapshot: LiteLlmManagerSnapshot; output: string } | { success: false; error?: string; output?: string; install?: LiteLlmInstallStatus }>
+  updateLiteLlm: () => Promise<{ success: true; snapshot: LiteLlmManagerSnapshot; output: string } | { success: false; error?: string; output?: string; install?: LiteLlmInstallStatus }>
+  startLiteLlmProxy: () => Promise<{ success: true; snapshot: LiteLlmManagerSnapshot } | { success: false; error?: string; snapshot?: LiteLlmManagerSnapshot }>
+  stopLiteLlmProxy: () => Promise<{ success: true; snapshot: LiteLlmManagerSnapshot } | { success: false; error?: string; snapshot?: LiteLlmManagerSnapshot }>
+  saveLiteLlmSettings: (settings: LiteLlmSettingsInput) => Promise<{ success: true; settings: LiteLlmSettingsSnapshot } | { success: false; error?: string }>
+  testLiteLlmConnection: () => Promise<{ success: true; modelCount: number } | { success: false; error?: string }>
+  listLiteLlmModels: () => Promise<{ success: true; models: LiteLlmModelEntry[] } | { success: false; error?: string }>
   listModels: () => Promise<ModelFileInfo[]>
   deleteModel: (filePath: string) => Promise<{ success: boolean; error?: string }>
   renameModel: (oldPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
@@ -38,6 +64,7 @@ interface LlamaCppApi {
   getCommands: (backendName: string) => Promise<CommandsSchema | null>
   saveBackendCommands: (backendName: string, schema: object) => Promise<{ success: boolean; error?: string }>
   listTemplates: () => Promise<Template[]>
+  getTemplate: (id: string) => Promise<Template | null>
   saveTemplate: (template: object) => Promise<{ success: boolean; id: string }>
   deleteTemplate: (id: string) => Promise<{ success: boolean }>
   importTemplate: () => Promise<Template | null>
@@ -47,6 +74,7 @@ interface LlamaCppApi {
   stopModel: (id: string) => Promise<{ success: boolean; error?: string }>
   onModelError: (cb: (data: { id: string; error: string }) => void) => void
   checkUpdates: () => Promise<ReleaseInfo>
+  updateBackendSource: (tagName?: string) => Promise<{ success: true; result: BackendSourceUpdateResult } | { success: false; error?: string; cancelled?: boolean }>
   downloadRelease: (opts: { url: string; version: string; assetName: string }) => Promise<{ success: boolean; path?: string; error?: string }>
   cancelBackendDownload: () => Promise<{ success: boolean }>
   onDownloadProgress: (callback: (data: { percent: number; phase: string }) => void) => void
@@ -58,9 +86,13 @@ interface LlamaCppApi {
   onHfDownloadProgress: (callback: (data: { percent: number; phase: string; filename: string; destPath: string; speed?: number }) => void) => void
   removeHfDownloadListener: () => void
   openFolder: (path: string) => Promise<void>
-  getPaths: () => Promise<{ models: string; templates: string; backend: string }>
+  getPaths: () => Promise<AppPaths>
+  chooseAppFolder: (kind: 'models' | 'backend') => Promise<string | null>
+  setAppFolder: (kind: 'models' | 'backend', path: string) => Promise<{ success: true; snapshot: FilesystemSnapshot } | { success: false; error?: string }>
   openExternal: (url: string) => Promise<void>
   openChatWindow: (port: number) => Promise<void>
+  openLiteLlmChatWindow: (templateId: string) => Promise<{ success: boolean; error?: string }>
+  liteLlmChatCompletion: (opts: { templateId: string; messages: LiteLlmChatMessage[] }) => Promise<{ success: true; message: LiteLlmChatMessage } | { success: false; error?: string }>
 }
 declare global {
   interface Window { api: LlamaCppApi }

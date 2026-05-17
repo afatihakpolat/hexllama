@@ -6,19 +6,25 @@ import CardsView from './components/CardsView'
 import SettingsView from './components/SettingsView'
 import HuggingFaceView from './components/HuggingFaceView'
 import ModelsView from './components/ModelsView'
-import AboutView from './components/AboutView'
+import LiteLlmView from './components/LiteLlmView'
 import CreateModal from './components/CreateModal'
 import UpdateBanner from './components/UpdateBanner'
 import ChatWindow from './components/ChatWindow'
+import LiteLlmChatWindow from './components/LiteLlmChatWindow'
 import { buildDefaultTemplate } from './utils/defaultTemplate'
 import type { Template } from '../../shared/types'
 
 export default function App() {
   const searchParams = new URLSearchParams(window.location.search)
   const chatUrl = searchParams.get('chat_url')
+  const liteLlmTemplateId = searchParams.get('litellm_template')
 
   if (chatUrl) {
     return <ChatWindow url={chatUrl} />
+  }
+
+  if (liteLlmTemplateId) {
+    return <LiteLlmChatWindow templateId={liteLlmTemplateId} />
   }
 
   const [loading, setLoading] = React.useState(true)
@@ -50,10 +56,10 @@ export default function App() {
         if (backendsData.length > 0) {
           setActiveBackend(backendsData[0])
           const cmds = await window.api.getCommands(backendsData[0].name)
-          if (cmds) setCommandsSchema(cmds)
+          setCommandsSchema(cmds)
         } else {
           const cmds = await window.api.getCommands('')
-          if (cmds) setCommandsSchema(cmds)
+          setCommandsSchema(cmds)
         }
         const templates = await window.api.listTemplates()
         setCards(
@@ -156,7 +162,7 @@ export default function App() {
   useEffect(() => {
     if (!activeBackend) return
     window.api.getCommands(activeBackend.name).then((cmds) => {
-      if (cmds) setCommandsSchema(cmds)
+      setCommandsSchema(cmds)
     })
   }, [activeBackend, setCommandsSchema])
 
@@ -180,8 +186,8 @@ export default function App() {
   function renderView() {
     if (view === 'hub') return <HuggingFaceView />
     if (view === 'settings') return <SettingsView />
+    if (view === 'litellm') return <LiteLlmView />
     if (view === 'models') return <ModelsView />
-    if (view === 'about') return <AboutView />
     return <CardsView />
   }
 
@@ -209,20 +215,6 @@ export default function App() {
         </main>
       </div>
       {showCreateModal && <CreateModal />}
-
-      <div
-        onClick={() => window.api.openExternal('https://andercoder.com')}
-        style={{
-          position: 'fixed', bottom: 16, right: 16, zIndex: 999, cursor: 'pointer',
-          opacity: 0.5, transition: 'opacity 0.2s',
-          filter: 'invert(1)'
-        }}
-        onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-        onMouseLeave={(e) => e.currentTarget.style.opacity = '0.5'}
-        title="AnderCoder"
-      >
-        <img src="./logo-stroke.svg" alt="AnderCoder" style={{ height: 24, display: 'block' }} draggable={false} />
-      </div>
     </div>
   )
 }

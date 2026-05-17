@@ -1,6 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 const api = {
+  getLiteLlmSettings: () => ipcRenderer.invoke('get-litellm-settings'),
+  getLiteLlmManager: () => ipcRenderer.invoke('get-litellm-manager'),
+  saveLiteLlmManagerSettings: (settings: object) => ipcRenderer.invoke('save-litellm-manager-settings', settings),
+  saveLiteLlmConfig: (configText: string) => ipcRenderer.invoke('save-litellm-config', configText),
+  installLiteLlm: () => ipcRenderer.invoke('install-litellm'),
+  updateLiteLlm: () => ipcRenderer.invoke('update-litellm'),
+  startLiteLlmProxy: () => ipcRenderer.invoke('start-litellm-proxy'),
+  stopLiteLlmProxy: () => ipcRenderer.invoke('stop-litellm-proxy'),
+  saveLiteLlmSettings: (settings: object) => ipcRenderer.invoke('save-litellm-settings', settings),
+  testLiteLlmConnection: () => ipcRenderer.invoke('test-litellm-connection'),
+  listLiteLlmModels: () => ipcRenderer.invoke('list-litellm-models'),
   listModels: () => ipcRenderer.invoke('list-models'),
   deleteModel: (filePath: string) => ipcRenderer.invoke('delete-model', filePath),
   renameModel: (oldPath: string, newName: string) => ipcRenderer.invoke('rename-model', oldPath, newName),
@@ -19,6 +30,7 @@ const api = {
   getCommands: (backendName: string) => ipcRenderer.invoke('get-commands', backendName),
   saveBackendCommands: (backendName: string, schema: object) => ipcRenderer.invoke('save-backend-commands', backendName, schema),
   listTemplates: () => ipcRenderer.invoke('list-templates'),
+  getTemplate: (id: string) => ipcRenderer.invoke('get-template', id),
   saveTemplate: (template: object) => ipcRenderer.invoke('save-template', template),
   deleteTemplate: (id: string) => ipcRenderer.invoke('delete-template', id),
   importTemplate: () => ipcRenderer.invoke('import-template'),
@@ -31,6 +43,7 @@ const api = {
     ipcRenderer.on('model-error', (_e, data) => cb(data))
   },
   checkUpdates: () => ipcRenderer.invoke('check-updates'),
+  updateBackendSource: (tagName?: string) => ipcRenderer.invoke('update-backend-source', tagName),
   downloadRelease: (opts: object) => ipcRenderer.invoke('download-release', opts),
   cancelBackendDownload: () => ipcRenderer.invoke('cancel-backend-download'),
   onDownloadProgress: (callback: (data: { percent: number; phase: string }) => void) => {
@@ -49,8 +62,12 @@ const api = {
   removeHfDownloadListener: () => ipcRenderer.removeAllListeners('hf-download-progress'),
   openFolder: (path: string) => ipcRenderer.invoke('open-folder', path),
   getPaths: () => ipcRenderer.invoke('get-paths'),
+  chooseAppFolder: (kind: 'models' | 'backend') => ipcRenderer.invoke('choose-app-folder', kind),
+  setAppFolder: (kind: 'models' | 'backend', path: string) => ipcRenderer.invoke('set-app-folder', kind, path),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openChatWindow: (port: number) => ipcRenderer.invoke('open-chat-window', port),
+  openLiteLlmChatWindow: (templateId: string) => ipcRenderer.invoke('open-litellm-chat-window', templateId),
+  liteLlmChatCompletion: (opts: object) => ipcRenderer.invoke('litellm-chat-completion', opts),
 }
 if (process.contextIsolated) {
   try {

@@ -1,14 +1,16 @@
 import React from 'react'
 import { useStore } from '../store/useStore'
-import { LayoutGrid, Settings, FolderOpen, HardDrive, Search } from 'lucide-react'
+import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Globe } from 'lucide-react'
+
 export default function Sidebar() {
   const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths } = useStore()
+
   async function switchBackend(name: string) {
     const b = backends.find((x) => x.name === name)
     if (!b) return
     setActiveBackend(b)
     const cmds = await window.api.getCommands(name)
-    if (cmds) setCommandsSchema(cmds)
+    setCommandsSchema(cmds)
   }
   return (
     <nav className="sidebar">
@@ -42,11 +44,11 @@ export default function Sidebar() {
         Settings
       </button>
       <button
-        className={`nav-item ${view === 'about' ? 'active' : ''}`}
-        onClick={() => setView('about')}
+        className={`nav-item ${view === 'litellm' ? 'active' : ''}`}
+        onClick={() => setView('litellm')}
       >
-        <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'monospace', width: 16, textAlign: 'center' }}>i</span>
-        About
+        <Globe size={16} />
+        LiteLLM
       </button>
       {backends.length > 0 && (
         <>
@@ -60,7 +62,7 @@ export default function Sidebar() {
             >
               <HardDrive size={16} />
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, textAlign: 'left' }}>
-                {b.name}
+                {b.displayName}
               </span>
             </button>
           ))}
@@ -78,11 +80,11 @@ export default function Sidebar() {
         <div style={{ marginTop: 'auto', paddingTop: 12 }}>
           <button className="nav-item" onClick={() => window.api.openFolder(paths.backend)} title={paths.backend}>
             <FolderOpen size={16} />
-            Open /backend
+            Open Backend Folder
           </button>
           <button className="nav-item" onClick={() => window.api.openFolder(paths.models)} title={paths.models}>
             <FolderOpen size={16} />
-            Open /models
+            Open Models Folder
           </button>
         </div>
       )}

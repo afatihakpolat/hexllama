@@ -133,7 +133,7 @@ export default function HuggingFaceView() {
           <p className="page-subtitle">Search and download GGUF models from HuggingFace</p>
         </div>
         <button className="btn btn-ghost" onClick={() => window.api.hfOpenModelsDir()} title="Open models folder">
-          <FolderOpen size={15} /> Open /models
+          <FolderOpen size={15} /> Open Models Folder
         </button>
       </div>
       {}

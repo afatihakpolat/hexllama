@@ -1,78 +1,110 @@
 import React, { useState, useEffect } from 'react'
 import { useStore } from '../store/useStore'
 import { X, Download, Loader2 } from 'lucide-react'
+import type { Template } from '../../../shared/types'
+
+interface BackendSourceUpdateResult {
+  snapshot: {
+    paths: { models: string; templates: string; backend: string }
+    models: Array<{ name: string; path: string; size: number; folder: string }>
+    backends: Array<{ name: string; displayName: string; path: string; hasCommands: boolean; exe: string | null }>
+  }
+  templates: Template[]
+  activeBackendName: string
+}
+
+function formatUpdateProgress(progress: { percent: number; phase: string } | null): string {
+  if (!progress) return ''
+
+  const labels: Record<string, string> = {
+    starting: 'Starting source update',
+    environment: 'Loading build environment',
+    fetching: 'Fetching upstream changes',
+    resetting: 'Resetting repository',
+    configuring: 'Configuring build',
+    building: 'Compiling source',
+    finalizing: 'Finalizing build',
+    done: 'Build complete',
+    cancelled: 'Update cancelled'
+  }
+
+  const label = labels[progress.phase] || progress.phase
+  if (progress.phase === 'done' || progress.phase === 'cancelled') return label
+  return `${label}... ${progress.percent || 0}%`
+}
+
 export default function UpdateBanner() {
-  const { releaseInfo, updateDismissed, setUpdateDismissed, downloadProgress, setDownloadProgress, setBackends } = useStore()
-  const [downloading, setDownloading] = useState(false)
-  const [selectedAssetUrl, setSelectedAssetUrl] = useState('')
-  useEffect(() => {
-    if (releaseInfo?.assets.length && !selectedAssetUrl) {
-      setSelectedAssetUrl(releaseInfo.assets[0].downloadUrl)
-    }
-  }, [releaseInfo, selectedAssetUrl])
+  const {
+    releaseInfo, updateDismissed, setUpdateDismissed,
+    downloadProgress, setDownloadProgress, setBackends,
+    setActiveBackend, setCommandsSchema, setCards, setModels, setPaths, setReleaseInfo
+  } = useStore()
+  const [updatingSource, setUpdatingSource] = useState(false)
   const notifPref = localStorage.getItem('hexllama_update_notify') || 'banner'
   if (!releaseInfo || releaseInfo.error || updateDismissed || releaseInfo.isNewer === false || notifPref === 'manual') return null
-  const handleDownload = async () => {
-    if (!releaseInfo.assets.length) return
-    const asset = releaseInfo.assets.find(a => a.downloadUrl === selectedAssetUrl) || releaseInfo.assets[0]
-    setDownloading(true)
-    const res = await window.api.downloadRelease({
-      url: asset.downloadUrl,
-      version: `${releaseInfo.tagName}-${asset.name.replace('.zip', '')}`,
-      assetName: asset.name
-    })
-    setDownloading(false)
-    setDownloadProgress(null)
-    if (res.success) {
-      alert(`Successfully downloaded and extracted ${asset.name}`)
-      setUpdateDismissed(true)
-      const backendsData = await window.api.listBackends()
-      setBackends(backendsData)
-    } else {
-      alert(`Download failed: ${res.error}`)
+
+  async function applyBackendUpdateResult(result: BackendSourceUpdateResult) {
+    setPaths(result.snapshot.paths)
+    setModels(result.snapshot.models)
+    setBackends(result.snapshot.backends)
+    setCards(result.templates.map((template) => ({ template, status: 'idle', expanded: false })))
+
+    const nextActiveBackend = result.snapshot.backends.find((backend) => backend.name === result.activeBackendName) ?? result.snapshot.backends[0] ?? null
+    setActiveBackend(nextActiveBackend)
+
+    const commands = nextActiveBackend
+      ? await window.api.getCommands(nextActiveBackend.name)
+      : await window.api.getCommands('')
+
+    setCommandsSchema(commands)
+    setReleaseInfo(await window.api.checkUpdates())
+  }
+
+  const handleSourceUpdate = async () => {
+    if (!releaseInfo?.tagName) return
+
+    setUpdatingSource(true)
+    try {
+      const res = await window.api.updateBackendSource(releaseInfo.tagName)
+      if (res.success) {
+        await applyBackendUpdateResult(res.result)
+        setUpdateDismissed(true)
+      } else if (res.cancelled) {
+        return
+      } else {
+        alert(`Source update failed: ${res.error}`)
+      }
+    } catch (error) {
+      alert(`Source update failed: ${String(error)}`)
+    } finally {
+      setUpdatingSource(false)
+      setDownloadProgress(null)
     }
   }
   return (
     <div className="update-banner">
-      {downloadProgress || downloading ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
+      {downloadProgress || updatingSource ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
       <span>
         <strong>{releaseInfo.name || releaseInfo.tagName}</strong> is available —{' '}
         <button onClick={() => window.api.openExternal(releaseInfo.url)}>
-          View release
+          View upstream tag
         </button>
-        {releaseInfo.assets.length > 0 && (
-          <>
-            {' '}·{' '}
-            {downloading || downloadProgress ? (
-              <span style={{ opacity: 0.8 }}>
-                {downloadProgress?.phase === 'extracting' ? 'Extracting...' : `Downloading... ${downloadProgress?.percent || 0}%`}
-              </span>
-            ) : (
-              <>
-                <select 
-                  style={{ background: 'transparent', color: 'inherit', border: 'none', outline: 'none', borderBottom: '1px solid rgba(255,255,255,0.2)', marginRight: '8px', maxWidth: '200px' }}
-                  value={selectedAssetUrl} 
-                  onChange={(e) => setSelectedAssetUrl(e.target.value)}
-                >
-                  {releaseInfo.assets.map(a => (
-                    <option style={{ color: 'black' }} key={a.downloadUrl} value={a.downloadUrl}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-                <button onClick={handleDownload}>
-                  Download
-                </button>
-              </>
-            )}
-          </>
+        {' '}·{' '}
+        {updatingSource || downloadProgress ? (
+          <span style={{ opacity: 0.8 }}>
+            {formatUpdateProgress(downloadProgress)}
+          </span>
+        ) : (
+          <button onClick={handleSourceUpdate}>
+            Build From Source
+          </button>
         )}
       </span>
-      {downloadProgress || downloading ? (
+      {downloadProgress || updatingSource ? (
         <button 
           className="dismiss text-danger" 
-          onClick={() => { window.api.cancelBackendDownload(); setDownloading(false); setDownloadProgress(null); }} 
-          title="Cancel Download"
+          onClick={() => { void window.api.cancelBackendDownload() }} 
+          title="Cancel Update"
         >
           Cancel
         </button>

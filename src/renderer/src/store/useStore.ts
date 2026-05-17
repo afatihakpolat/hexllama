@@ -23,7 +23,7 @@ interface AppStore {
   commandsSchema: CommandsSchema | null
   releaseInfo: ReleaseInfo | null
   paths: { models: string; templates: string; backend: string } | null
-  view: 'cards' | 'settings' | 'hub' | 'models' | 'about'
+  view: 'cards' | 'settings' | 'hub' | 'models' | 'litellm'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
@@ -37,8 +37,8 @@ interface AppStore {
   hubSelectedModelId: string | null
   setView: (v: AppStore['view']) => void
   setShowCreateModal: (show: boolean, template?: Template | null) => void
-  setActiveBackend: (b: BackendVersion) => void
-  setCommandsSchema: (s: CommandsSchema) => void
+  setActiveBackend: (b: BackendVersion | null) => void
+  setCommandsSchema: (s: CommandsSchema | null) => void
   setBackends: (b: BackendVersion[]) => void
   setModels: (m: ModelFileInfo[]) => void
   setCards: (c: CardState[]) => void

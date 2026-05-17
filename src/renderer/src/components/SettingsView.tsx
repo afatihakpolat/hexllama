@@ -1,31 +1,122 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { useStore } from '../store/useStore'
-import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff } from 'lucide-react'
+import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderOpen } from 'lucide-react'
 import CommandsEditor from './CommandsEditor'
+import type { BackendVersion, Template } from '../../../shared/types'
+import type { ModelFileInfo } from '../store/useStore'
 
 const NOTIF_KEY = 'hexllama_update_notify'
+
+type FolderKind = 'models' | 'backend'
+
+interface FilesystemSnapshot {
+  paths: { models: string; templates: string; backend: string }
+  models: ModelFileInfo[]
+  backends: BackendVersion[]
+}
+
+interface BackendSourceUpdateResult {
+  snapshot: FilesystemSnapshot
+  templates: Template[]
+  activeBackendName: string
+}
+
+function formatUpdateProgress(progress: { percent: number; phase: string } | null): string {
+  if (!progress) return ''
+
+  const labels: Record<string, string> = {
+    starting: 'Starting source update',
+    environment: 'Loading build environment',
+    fetching: 'Fetching upstream changes',
+    resetting: 'Resetting repository',
+    configuring: 'Configuring build',
+    building: 'Compiling source',
+    finalizing: 'Finalizing build',
+    done: 'Build complete',
+    cancelled: 'Update cancelled'
+  }
+
+  const label = labels[progress.phase] || progress.phase
+  if (progress.phase === 'done' || progress.phase === 'cancelled') return label
+  return `${label}... ${progress.percent || 0}%`
+}
 
 function getNotifPref(): 'banner' | 'manual' {
   return (localStorage.getItem(NOTIF_KEY) as 'banner' | 'manual') || 'banner'
 }
 
 export default function SettingsView() {
-  const { backends, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
-          releaseInfo, checkingUpdate, downloadProgress, setDownloadProgress, setCheckingUpdate, setReleaseInfo } = useStore()
-  const [downloading, setDownloading] = useState(false)
-  const [selectedAssetUrl, setSelectedAssetUrl] = useState('')
+  const {
+    backends, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
+    setModels, setCards, paths, setPaths, modelDownloads,
+    releaseInfo, checkingUpdate, downloadProgress, setDownloadProgress, setCheckingUpdate, setReleaseInfo
+  } = useStore()
+  const [updatingSource, setUpdatingSource] = useState(false)
   const [expandedEditor, setExpandedEditor] = useState<string | null>(null)
   const [notifPref, setNotifPref] = useState<'banner' | 'manual'>(getNotifPref())
+  const [changingFolder, setChangingFolder] = useState<FolderKind | null>(null)
 
-  useEffect(() => {
-    if (releaseInfo?.assets.length && !selectedAssetUrl) {
-      setSelectedAssetUrl(releaseInfo.assets[0].downloadUrl)
-    }
-  }, [releaseInfo, selectedAssetUrl])
+  const hasActiveDownloads = updatingSource || !!downloadProgress || Object.values(modelDownloads).some((download) => !['done', 'error', 'cancelled'].includes(download.phase))
 
   function handleNotifPref(pref: 'banner' | 'manual') {
     setNotifPref(pref)
     localStorage.setItem(NOTIF_KEY, pref)
+  }
+
+
+  async function applyFilesystemSnapshot(snapshot: FilesystemSnapshot) {
+    setPaths(snapshot.paths)
+    setModels(snapshot.models)
+    setBackends(snapshot.backends)
+
+    const nextActiveBackend = snapshot.backends.find((backend) => backend.name === activeBackend?.name) ?? snapshot.backends[0] ?? null
+    setActiveBackend(nextActiveBackend)
+
+    const commands = nextActiveBackend
+      ? await window.api.getCommands(nextActiveBackend.name)
+      : await window.api.getCommands('')
+
+    setCommandsSchema(commands)
+  }
+
+  async function applyBackendUpdateResult(result: BackendSourceUpdateResult) {
+    setPaths(result.snapshot.paths)
+    setModels(result.snapshot.models)
+    setBackends(result.snapshot.backends)
+    setCards(result.templates.map((template) => ({ template, status: 'idle', expanded: false })))
+
+    const nextActiveBackend = result.snapshot.backends.find((backend) => backend.name === result.activeBackendName) ?? result.snapshot.backends[0] ?? null
+    setActiveBackend(nextActiveBackend)
+
+    const commands = nextActiveBackend
+      ? await window.api.getCommands(nextActiveBackend.name)
+      : await window.api.getCommands('')
+
+    setCommandsSchema(commands)
+    setReleaseInfo(await window.api.checkUpdates())
+  }
+
+  async function handleChangeFolder(kind: FolderKind) {
+    if (hasActiveDownloads) {
+      alert('Finish or cancel active downloads before changing storage folders.')
+      return
+    }
+
+    const selectedPath = await window.api.chooseAppFolder(kind)
+    if (!selectedPath) return
+
+    setChangingFolder(kind)
+    try {
+      const result = await window.api.setAppFolder(kind, selectedPath)
+      if (!result.success) {
+        alert(`Failed to update ${kind} folder: ${result.error || 'Unknown error'}`)
+        return
+      }
+
+      await applyFilesystemSnapshot(result.snapshot)
+    } finally {
+      setChangingFolder(null)
+    }
   }
 
   async function handleSwitchBackend(name: string) {
@@ -33,7 +124,7 @@ export default function SettingsView() {
     if (!b) return
     setActiveBackend(b)
     const cmds = await window.api.getCommands(name)
-    if (cmds) setCommandsSchema(cmds)
+    setCommandsSchema(cmds)
   }
 
   async function handleDeleteBackend(name: string) {
@@ -55,21 +146,25 @@ export default function SettingsView() {
     }
   }
 
-  const handleDownload = async () => {
-    if (!releaseInfo || !releaseInfo.assets.length) return
-    const asset = releaseInfo.assets.find(a => a.downloadUrl === selectedAssetUrl) || releaseInfo.assets[0]
-    setDownloading(true)
-    const res = await window.api.downloadRelease({
-      url: asset.downloadUrl,
-      version: `${releaseInfo.tagName}-${asset.name.replace('.zip', '')}`,
-      assetName: asset.name
-    })
-    setDownloading(false)
-    setDownloadProgress(null)
-    if (res.success) {
-      const backendsData = await window.api.listBackends()
-      setBackends(backendsData)
-    } else alert(`Download failed: ${res.error}`)
+  const handleSourceUpdate = async () => {
+    if (!releaseInfo?.tagName) return
+
+    setUpdatingSource(true)
+    try {
+      const res = await window.api.updateBackendSource(releaseInfo.tagName)
+      if (res.success) {
+        await applyBackendUpdateResult(res.result)
+      } else if (res.cancelled) {
+        return
+      } else {
+        alert(`Source update failed: ${res.error}`)
+      }
+    } catch (error) {
+      alert(`Source update failed: ${String(error)}`)
+    } finally {
+      setUpdatingSource(false)
+      setDownloadProgress(null)
+    }
   }
 
   return (
@@ -112,7 +207,63 @@ export default function SettingsView() {
         </div>
       </div>
 
-      {}
+      <div className="settings-section">
+        <div className="settings-section-title"><FolderOpen /> Storage Locations</div>
+        <div className="settings-row">
+          <div>
+            <div className="settings-row-label">Models Folder</div>
+            <div className="settings-row-sub mono">{paths?.models || 'Loading...'}</div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => handleChangeFolder('models')}
+              disabled={!paths || hasActiveDownloads || changingFolder !== null}
+            >
+              {changingFolder === 'models' ? <Loader2 size={14} className="spin" /> : <FolderOpen size={14} />}
+              Browse
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => paths && window.api.openFolder(paths.models)}
+              disabled={!paths}
+              title={paths?.models}
+            >
+              Open
+            </button>
+          </div>
+        </div>
+        <div className="settings-row" style={{ borderBottom: 'none' }}>
+          <div>
+            <div className="settings-row-label">Backend Folder</div>
+            <div className="settings-row-sub mono">{paths?.backend || 'Loading...'}</div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => handleChangeFolder('backend')}
+              disabled={!paths || hasActiveDownloads || changingFolder !== null}
+            >
+              {changingFolder === 'backend' ? <Loader2 size={14} className="spin" /> : <FolderOpen size={14} />}
+              Browse
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => paths && window.api.openFolder(paths.backend)}
+              disabled={!paths}
+              title={paths?.backend}
+            >
+              Open
+            </button>
+          </div>
+        </div>
+        {hasActiveDownloads && (
+          <p style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)' }}>
+            Storage folders are locked while downloads are active.
+          </p>
+        )}
+      </div>
+
       <div className="settings-section">
         <div className="settings-section-title"><HardDrive /> Installed Backends</div>
         {backends.length === 0 ? (
@@ -126,11 +277,11 @@ export default function SettingsView() {
                 <div className="settings-row">
                   <div>
                     <div className="settings-row-label flex items-center gap-2">
-                      {b.name}
+                      {b.displayName}
                       {activeBackend?.name === b.name && <span className="version-badge active-version">Active</span>}
                       {!b.hasCommands && <span className="version-badge">Fallback Schema</span>}
                     </div>
-                    <div className="settings-row-sub mono">{b.exe || 'No executable found'}</div>
+                    <div className="settings-row-sub mono">{b.name} · {b.exe || 'No executable found'}</div>
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -173,7 +324,7 @@ export default function SettingsView() {
         <div className="settings-section-title"><Download /> Available Updates</div>
         {checkingUpdate ? (
           <div className="flex items-center gap-2 text-sm py-4" style={{ color: 'var(--text-muted)' }}>
-            <RefreshCw size={14} className="spin" /> Checking GitHub for releases...
+            <RefreshCw size={14} className="spin" /> Checking upstream git tags...
           </div>
         ) : releaseInfo ? (
           releaseInfo.error ? (
@@ -183,38 +334,26 @@ export default function SettingsView() {
               <div>
                 <div className="settings-row-label">{releaseInfo.name || releaseInfo.tagName}</div>
                 <div className="settings-row-sub">
-                  Published: {new Date(releaseInfo.publishedAt).toLocaleDateString()}
+                  {releaseInfo.publishedAt ? `Published: ${new Date(releaseInfo.publishedAt).toLocaleDateString()}` : 'Checked against upstream git tags'}
                   {releaseInfo.isNewer === false && <span style={{ marginLeft: 8, color: 'var(--success)' }}>✓ Up to date</span>}
                 </div>
               </div>
-              {releaseInfo.isNewer !== false && releaseInfo.assets.length > 0 && (
+              {releaseInfo.isNewer !== false && (
                 <div className="flex items-center gap-2 w-full">
-                  <select
-                    className="cmd-select flex-1"
-                    value={selectedAssetUrl}
-                    onChange={e => setSelectedAssetUrl(e.target.value)}
-                    disabled={downloading || !!downloadProgress}
-                  >
-                    {releaseInfo.assets.map(a => (
-                      <option key={a.downloadUrl} value={a.downloadUrl}>
-                        {a.name} ({Math.round(a.size / 1024 / 1024)} MB)
-                      </option>
-                    ))}
-                  </select>
-                  {downloading || downloadProgress ? (
+                  {updatingSource || downloadProgress ? (
                     <div className="text-sm flex items-center gap-3" style={{ color: 'var(--text-muted)' }}>
                       <Loader2 size={14} className="spin" />
-                      {downloadProgress?.phase === 'extracting' ? 'Extracting...' : `Downloading... ${downloadProgress?.percent || 0}%`}
+                      {formatUpdateProgress(downloadProgress)}
                       <button 
                         className="btn btn-ghost btn-sm text-danger" 
-                        onClick={() => { window.api.cancelBackendDownload(); setDownloading(false); setDownloadProgress(null); }}
+                        onClick={() => { void window.api.cancelBackendDownload() }}
                         style={{ padding: '0 8px' }}
                       >
                         Cancel
                       </button>
                     </div>
                   ) : (
-                    <button className="btn btn-primary btn-sm" onClick={handleDownload}>Download</button>
+                    <button className="btn btn-primary btn-sm" onClick={handleSourceUpdate}>Build From Source</button>
                   )}
                 </div>
               )}
@@ -224,7 +363,7 @@ export default function SettingsView() {
           <div className="text-sm py-4" style={{ color: 'var(--text-muted)' }}>Click "Check Now" to query GitHub.</div>
         )}
         <div className="mt-4 pt-4 border-t">
-          <button className="btn btn-secondary w-full justify-center" onClick={handleCheckUpdates} disabled={checkingUpdate || downloading}>
+          <button className="btn btn-secondary w-full justify-center" onClick={handleCheckUpdates} disabled={checkingUpdate || updatingSource}>
             <RefreshCw size={14} className={checkingUpdate ? 'spin' : ''} /> Check Now
           </button>
         </div>
