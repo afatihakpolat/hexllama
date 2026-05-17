@@ -13,6 +13,7 @@ export default function LiteLlmView() {
   const [host, setHost] = useState('127.0.0.1')
   const [port, setPort] = useState(4000)
   const [logLevel, setLogLevel] = useState<LiteLlmLogLevel>('info')
+  const [apiKey, setApiKey] = useState('')
   const [configText, setConfigText] = useState('')
   const [managerDraftDirty, setManagerDraftDirty] = useState(false)
   const [configDirty, setConfigDirty] = useState(false)
@@ -29,6 +30,7 @@ export default function LiteLlmView() {
       setHost(snapshot.settings.host)
       setPort(snapshot.settings.port)
       setLogLevel(snapshot.settings.logLevel)
+      setApiKey(snapshot.settings.apiKey)
       setManagerDraftDirty(false)
       managerDraftDirtyRef.current = false
     }
@@ -69,7 +71,7 @@ export default function LiteLlmView() {
   async function handleSaveRuntime() {
     setBusyAction('save-runtime')
     try {
-      const result = await window.api.saveLiteLlmManagerSettings({ host, port, logLevel })
+      const result = await window.api.saveLiteLlmManagerSettings({ host, port, logLevel, apiKey })
       if (!result.success) {
         throw new Error(result.error || 'Failed to save LiteLLM runtime settings.')
       }
@@ -234,6 +236,18 @@ export default function LiteLlmView() {
                 <option value="debug">Debug</option>
                 <option value="detailed_debug">Detailed Debug</option>
               </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Local Proxy API Key</label>
+              <input
+                type="password"
+                className="form-input mono"
+                value={apiKey}
+                onChange={(event) => { setApiKey(event.target.value); setManagerDraftDirty(true); managerDraftDirtyRef.current = true }}
+                placeholder="Leave blank if your local proxy does not require auth"
+                autoComplete="off"
+              />
+              <div className="form-hint">Used for Test Local Proxy and Refresh Models against the managed LiteLLM server. Use the LiteLLM proxy master key here, not an upstream provider API key.</div>
             </div>
           </div>
           <div className="settings-row-sub mono">Config file: {manager?.settings.configPath || 'Loading...'}</div>

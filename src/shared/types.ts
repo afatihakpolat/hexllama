@@ -54,12 +54,14 @@ export interface LiteLlmManagerSettings {
   port: number
   configPath: string
   logLevel: LiteLlmLogLevel
+  apiKey: string
 }
 
 export interface LiteLlmManagerSettingsInput {
   host: string
   port: number
   logLevel: LiteLlmLogLevel
+  apiKey: string
 }
 
 export interface LiteLlmInstallStatus {

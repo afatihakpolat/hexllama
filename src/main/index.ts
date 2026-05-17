@@ -1,8 +1,11 @@
 import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { registerIpcHandlers } from './ipc'
+import { registerIpcHandlers, shutdownManagedProcesses } from './ipc'
 import { existsSync } from 'fs'
+
+let isShuttingDown = false
+
 function resolveIcon(): string | undefined {
   const candidates = [
     join(process.cwd(), 'assets', 'icon.png'),                  
@@ -54,6 +57,15 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.hexllama')
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
+  })
+  app.on('before-quit', (event) => {
+    if (isShuttingDown) return
+
+    isShuttingDown = true
+    event.preventDefault()
+    void shutdownManagedProcesses().finally(() => {
+      app.quit()
+    })
   })
   registerIpcHandlers()
   createWindow()

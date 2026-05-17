@@ -14,6 +14,11 @@
 - Removed the remaining LiteLLM-template code paths from cards, the dedicated chat route, preload, shared template types, and main IPC.
 - Normalized loaded, saved, and imported templates to strip removed LiteLLM-only fields, and made invalid legacy templates show missing configuration instead of appearing ready to start.
 - Removed the stale external LiteLLM settings API surface from preload, renderer typings, and unused main-process helpers.
+- Fixed LiteLLM proxy startup to use LiteLLM's actual Python entry point instead of the invalid `python -m litellm` path.
+- Increased the LiteLLM readiness timeout from 5 seconds to 30 seconds so slower proxy startup is not killed prematurely.
+- Added a configurable API key to the managed LiteLLM runtime settings so Test Local Proxy and Refresh Models can authenticate against the loopback proxy when local auth is enabled.
+- Fixed managed LiteLLM no-auth startup to ignore an inherited `LITELLM_MASTER_KEY` environment variable when the saved config sets `general_settings.disable_auth: true`, matching the user's working local script.
+- Added an app shutdown hook so closing Hexllama also stops the managed LiteLLM proxy instead of leaving the child process running.
 
 ## Verification
 - `npm run build`
@@ -22,7 +27,11 @@
 - `npm run build` after the dedicated LiteLLM manager page and local proxy control flow
 - `npm run build` after removing the remaining LiteLLM-template runtime path
 - `npm run build` after normalizing legacy templates and removing the stale LiteLLM settings API surface
+- `npm run build` after fixing LiteLLM startup entry-point and readiness timeout handling
+- `npm run build` after adding managed LiteLLM API key support for proxy test and model listing
+- `npm run build` after making managed LiteLLM startup ignore inherited master-key auth in no-auth mode
+- `npm run build` after adding managed LiteLLM shutdown cleanup on app exit
 
 ## Next Recommended Check
 - Manual smoke test in the running app: point the backend folder at a llama.cpp repo, run "Check Now", trigger "Build From Source", confirm a new `b####` folder appears without deleting older builds, confirm pinned templates move to the new backend, and confirm cancel stops without an error alert.
-- Manual smoke test for LiteLLM manager: open the LiteLLM page, confirm Python detection, install or update LiteLLM if needed, save the default config, start the proxy, test the local proxy, refresh remote models, and confirm a local template still starts against a local backend as before.
+- Manual smoke test for LiteLLM manager: open the LiteLLM page, confirm Python detection, install or update LiteLLM if needed, save the default config, set a local proxy API key if your config requires auth, start the proxy, test the local proxy, refresh remote models, and confirm a local template still starts against a local backend as before.

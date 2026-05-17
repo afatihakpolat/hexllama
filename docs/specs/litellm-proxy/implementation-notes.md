@@ -12,3 +12,8 @@
 - The template editor is now local-only; LiteLLM is served from its own page rather than represented as a template provider.
 - Template load/save/import now normalize template JSON to strip removed LiteLLM-only fields so older exports cannot resurrect the deleted provider path.
 - Cards without a valid local model path now surface missing configuration instead of appearing ready to launch.
+- Managed LiteLLM startup must invoke LiteLLM's callable server entry point rather than `python -m litellm`, because the installed package does not expose `litellm.__main__`.
+- Real LiteLLM configs can take longer than 5 seconds to pass the `/v1/models` readiness probe, so Hexllama now allows a 30-second startup window before treating the launch as failed.
+- The managed LiteLLM runtime settings now include a saved local API key so loopback proxy test/model-list requests can authenticate without exposing an editable external base URL.
+- Managed LiteLLM startup now strips an inherited `LITELLM_MASTER_KEY` from the child process environment when the saved config disables auth, because the user's shell environment can otherwise silently re-enable proxy auth despite `disable_auth: true` in the YAML.
+- Closing the Electron app now explicitly stops the managed LiteLLM child process during `before-quit`, so the loopback proxy does not remain running after Hexllama exits.

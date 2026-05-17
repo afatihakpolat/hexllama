@@ -58,7 +58,7 @@ interface LiteLlmStoredSettings {
   apiKey: string
 }
 
-interface LiteLlmManagerStoredSettings extends LiteLlmManagerSettings {}
+type LiteLlmManagerStoredSettings = Omit<LiteLlmManagerSettings, 'apiKey'>
 
 interface PythonRuntimeCommand {
   command: string
@@ -404,8 +404,8 @@ let latestLiteLlmVersionCache: { version: string | null; checkedAt: number } | n
 
 function syncLiteLlmSettingsToManagedProxy(): void {
   const managedBaseUrl = getManagedLiteLlmBaseUrl()
-  if (liteLlmSettings.baseUrl !== managedBaseUrl || liteLlmSettings.apiKey) {
-    liteLlmSettings = { ...liteLlmSettings, baseUrl: managedBaseUrl, apiKey: '' }
+  if (liteLlmSettings.baseUrl !== managedBaseUrl) {
+    liteLlmSettings = { ...liteLlmSettings, baseUrl: managedBaseUrl }
     persistLiteLlmStoredSettings(liteLlmSettings)
   }
 }
@@ -446,6 +446,10 @@ function readLiteLlmConfigText(): string {
 function saveLiteLlmConfigText(configText: string): void {
   ensureDirectory(dirname(liteLlmManagerSettings.configPath))
   writeFileSync(liteLlmManagerSettings.configPath, configText, 'utf-8')
+}
+
+function shouldDisableLiteLlmAuth(configText: string): boolean {
+  return /general_settings\s*:\s*[\s\S]*?disable_auth\s*:\s*true\b/i.test(configText)
 }
 
 function appendLiteLlmLog(chunk: string): void {
@@ -513,7 +517,7 @@ function probeLiteLlmApi(baseUrl: string): Promise<boolean> {
   })
 }
 
-function waitForLiteLlmServerReady(baseUrl: string, child: ChildProcess, timeoutMs = 5000): Promise<void> {
+function waitForLiteLlmServerReady(baseUrl: string, child: ChildProcess, timeoutMs = 30000): Promise<void> {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + timeoutMs
     let settled = false
@@ -644,7 +648,10 @@ async function resolveLiteLlmInstallStatus(): Promise<LiteLlmInstallStatus> {
 }
 
 function buildLiteLlmManagerSettingsSnapshot(): LiteLlmManagerSettings {
-  return { ...liteLlmManagerSettings }
+  return {
+    ...liteLlmManagerSettings,
+    apiKey: liteLlmSettings.apiKey
+  }
 }
 
 async function buildLiteLlmManagerSnapshot(): Promise<LiteLlmManagerSnapshot> {
@@ -662,6 +669,7 @@ function saveLiteLlmManagerSettings(input: LiteLlmManagerSettingsInput): LiteLlm
   const nextHost = normalizeLiteLlmHost(input.host)
   const nextPort = normalizeLiteLlmPort(input.port)
   const nextLogLevel = normalizeLiteLlmLogLevel(input.logLevel)
+  const nextApiKey = input.apiKey.trim()
   if (
     isLiteLlmProxyRunning() &&
     (
@@ -686,8 +694,16 @@ function saveLiteLlmManagerSettings(input: LiteLlmManagerSettingsInput): LiteLlm
   ensureLiteLlmConfigFile()
 
   const nextManagedBaseUrl = buildManagedLiteLlmBaseUrl(liteLlmManagerSettings)
-  if (liteLlmSettings.baseUrl === previousManagedBaseUrl || liteLlmSettings.baseUrl !== nextManagedBaseUrl) {
-    syncLiteLlmSettingsToManagedProxy()
+  if (
+    liteLlmSettings.baseUrl === previousManagedBaseUrl ||
+    liteLlmSettings.baseUrl !== nextManagedBaseUrl ||
+    liteLlmSettings.apiKey !== nextApiKey
+  ) {
+    liteLlmSettings = {
+      baseUrl: nextManagedBaseUrl,
+      apiKey: nextApiKey
+    }
+    persistLiteLlmStoredSettings(liteLlmSettings)
   }
 
   return buildLiteLlmManagerSettingsSnapshot()
@@ -761,11 +777,12 @@ async function startLiteLlmProxyProcess(): Promise<{ success: true; snapshot: Li
   }
 
   const configPath = ensureLiteLlmConfigFile()
+  const configText = readLiteLlmConfigText()
   syncLiteLlmSettingsToManagedProxy()
   const args = [
     ...runtime.argsPrefix,
-    '-m',
-    'litellm',
+    '-c',
+    'from litellm import run_server; run_server()',
     '--config',
     configPath,
     '--host',
@@ -781,11 +798,21 @@ async function startLiteLlmProxyProcess(): Promise<{ success: true; snapshot: Li
     args.push('--detailed_debug')
   }
 
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    PYTHONUTF8: '1',
+    PYTHONIOENCODING: 'utf-8'
+  }
+
+  if (shouldDisableLiteLlmAuth(configText)) {
+    delete childEnv.LITELLM_MASTER_KEY
+  }
+
   appendLiteLlmLog(`Starting LiteLLM proxy with ${runtime.displayCommand} ${args.join(' ')}`)
   const child = spawn(runtime.command, args, {
     cwd: dirname(configPath),
     windowsHide: true,
-    env: { ...process.env, PYTHONUTF8: '1' }
+    env: childEnv
   })
 
   child.stdout?.on('data', (chunk) => appendLiteLlmLog(chunk.toString()))
@@ -828,6 +855,14 @@ async function stopLiteLlmProxyProcess(): Promise<{ success: true; snapshot: Lit
   appendLiteLlmLog(`Stopped LiteLLM proxy process ${pid}`)
   liteLlmProxyProcess = null
   return { success: true, snapshot: await buildLiteLlmManagerSnapshot() }
+}
+
+export async function shutdownManagedProcesses(): Promise<void> {
+  if (liteLlmProxyProcess?.pid) {
+    appendLiteLlmLog(`Stopping LiteLLM proxy process ${liteLlmProxyProcess.pid} during app shutdown`)
+    await killProcessTree(liteLlmProxyProcess.pid)
+    liteLlmProxyProcess = null
+  }
 }
 
 function isSafePath(base: string, target: string): boolean {
@@ -1234,14 +1269,48 @@ function fetchJson(url: string): Promise<unknown> {
   return requestJson(url)
 }
 
+function normalizeLiteLlmProxyRequestError(error: unknown): Error {
+  const fallbackMessage = error instanceof Error ? error.message : String(error)
+
+  try {
+    const parsed = JSON.parse(fallbackMessage) as {
+      error?: {
+        message?: string
+        type?: string
+        code?: string | number
+      }
+    }
+
+    const proxyError = parsed?.error
+    const message = typeof proxyError?.message === 'string' ? proxyError.message.trim() : ''
+    const type = typeof proxyError?.type === 'string' ? proxyError.type.trim() : ''
+    const code = proxyError?.code
+
+    if (message === 'No connected db.' || type === 'no_db_connection' || code === '400') {
+      return new Error('LiteLLM rejected the saved proxy API key. Use the LiteLLM proxy master key or clear the field if your local proxy should allow unauthenticated requests.')
+    }
+
+    if (message) {
+      return new Error(message)
+    }
+  } catch {}
+
+  return new Error(fallbackMessage)
+}
+
 async function listLiteLlmModelsFromSettings(): Promise<LiteLlmModelEntry[]> {
   if (!isLiteLlmProxyRunning()) {
     throw new Error('LiteLLM proxy is not running.')
   }
 
-  const response = await requestJson(buildLiteLlmApiUrl(getManagedLiteLlmBaseUrl(), '/models'), {
-    headers: buildLiteLlmRequestHeaders(liteLlmSettings)
-  }) as { data?: Array<{ id?: string }> } | null
+  let response: { data?: Array<{ id?: string }> } | null = null
+  try {
+    response = await requestJson(buildLiteLlmApiUrl(getManagedLiteLlmBaseUrl(), '/models'), {
+      headers: buildLiteLlmRequestHeaders(liteLlmSettings)
+    }) as { data?: Array<{ id?: string }> } | null
+  } catch (error) {
+    throw normalizeLiteLlmProxyRequestError(error)
+  }
 
   const models = Array.isArray(response?.data)
     ? response.data
