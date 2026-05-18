@@ -46,6 +46,7 @@
 - Stopped source-build refreshes from rewriting pinned template backends; explicitly pinned templates keep their backend choice, while `Default (Active)` templates continue following the persisted global active backend.
 - Added explicit backend flavor metadata and UI labeling so CPU and CUDA builds no longer appear as duplicate `b####` entries; backend names now render as labels like `b#### · CPU` or `b#### · CUDA`, with a flavor badge in Settings.
 - Settings and the update banner now hide source-build buttons for build flavors that are already installed for the latest upstream tag; if both latest CPU and CUDA variants exist, the build actions disappear entirely.
+- Reverted the single-active-template restriction in the main-process launch path so different templates can run concurrently again; the app still prevents starting the exact same template twice.
 
 ## Verification
 - `npm run build` after switching usage persistence from raw request ledger rows to compact per-session summaries with an in-memory recent-request buffer
@@ -77,6 +78,7 @@
 - `npm run build` after adding CPU-only backend source builds, active-backend persistence, and safe failed-build cleanup
 - `npm run build` after adding backend flavor labels so CPU and CUDA backends render distinctly across the UI
 - `npm run build` after hiding CPU/CUDA build buttons when the latest installed variants already exist
+- `npm run build` after removing the guard that stopped other running templates before launching a new one
 
 ## Next Recommended Check
 - Manual smoke test for proxy-backed usage stats: start an API template, send both standard and streaming requests through `/v1/chat/completions`, `/completions`, or `/completion`, confirm the request rows appear live on Usage Stats, verify input/cache/output/total stay internally consistent between the summary card and request rows, stop the session, restart the app, and confirm historical totals remain while Recent Requests resets.

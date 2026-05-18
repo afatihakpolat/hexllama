@@ -1452,15 +1452,6 @@ async function stopRunningModel(id: string): Promise<void> {
     proc.kill()
   }
 }
-
-async function stopOtherRunningModels(nextTemplateId: string): Promise<void> {
-  const activeTemplateIds = Array.from(runningProcesses.keys())
-    .filter((templateId) => templateId !== nextTemplateId)
-
-  for (const templateId of activeTemplateIds) {
-    await stopRunningModel(templateId)
-  }
-}
 interface DownloadTask {
   id: string
   url: string
@@ -1973,8 +1964,6 @@ export function registerIpcHandlers(): void {
     const publicHost = getPublicBindHost(opts.args)
 
     try {
-      await stopOtherRunningModels(opts.id)
-
       const upstreamPort = await allocateLoopbackPort()
       const upstreamArgs = prepareUpstreamArgs(opts.args, upstreamPort)
       const proxyHandle: LlamaProxyHandle = await startLlamaProxy({
