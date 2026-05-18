@@ -1,0 +1,19 @@
+# Llama Proxy Usage Stats Implementation Notes
+
+- The public template port should remain `template.serverPort`; the hidden upstream port should be allocated per running session and never written back to template JSON.
+- Exact token totals must come only from upstream response `usage` and `timings` data observed by the proxy. Do not add tokenizer-based estimation as a fallback.
+- The existing `run-model` renderer API can likely stay stable if the proxy/session lifecycle is handled entirely inside the main process.
+- The raw JSONL request ledger is no longer the primary history store. Durable history now lives in compact per-session JSON summaries under `userData/usage-sessions/`, while Recent Requests is an in-memory last-20 buffer for the current app run.
+- Live Output should remain raw stdout/stderr only. Structured request analytics belong on a separate Usage Stats page.
+- The first implementation should bias toward API-only templates; web UI passthrough is secondary until the required proxy behavior is validated.
+- V1 counted scope now includes proxied `/v1/chat/completions`, `/v1/completions`, `/completion`, `/completions`, and `/chat/completions`. Other requests remain out of scope unless they are added deliberately.
+- Streaming support is implemented by observing SSE chunks and extracting the latest exact `usage` or `timings` payload when llama.cpp includes it. Streams that never emit exact usage stay visible in history as non-exact rows.
+- `run-model` now rewrites upstream launch args to force llama.cpp onto a hidden `127.0.0.1:<ephemeral-port>` listener while the LlamaDeck proxy owns the user-facing template port.
+- Live session state is held in the main process and exposed through `get-usage-stats`; the renderer keeps filter/load state local to `UsageStatsView.tsx` rather than extending Zustand for this page-scoped feature.
+- A one-time migration imports older `llama-usage-history.jsonl` rows into session files, after which the app stops growing the raw request ledger.
+- Active session summaries are rewritten after each tracked request, and normal stop/quit paths finalize the session file with `stoppedAt`/status metadata.
+- Cache accounting is now stored separately as `cacheTokens` on request rows, rollups, and live sessions. `promptTokens` remains total input tokens, so cache should be interpreted as a subset of input rather than an additional independent total.
+- `get-usage-stats` now also returns per-session rollups for the selected window/template, including window-aware activity timestamps so the renderer can offer a dedicated session-analysis tab with local status filtering plus template/status grouping without mixing windowed totals with full-session timing.
+- Proxy shutdown now destroys open sockets before closing the public listener so stopping a model does not hang behind long-lived streaming requests.
+- Day-window rollups use local-day buckets consistently so `Today` and `7 Days` do not drift at timezone boundaries.
+- Remaining validation gap: there are still no automated tests for proxy extraction or ledger aggregation, and the new flow still needs a manual smoke test against a real llama.cpp server.

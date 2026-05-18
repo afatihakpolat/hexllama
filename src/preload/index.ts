@@ -29,6 +29,7 @@ const api = {
   saveBackendCommands: (backendName: string, schema: object) => ipcRenderer.invoke('save-backend-commands', backendName, schema),
   listTemplates: () => ipcRenderer.invoke('list-templates'),
   getTemplate: (id: string) => ipcRenderer.invoke('get-template', id),
+  getUsageStats: (query?: object) => ipcRenderer.invoke('get-usage-stats', query),
   saveTemplate: (template: object) => ipcRenderer.invoke('save-template', template),
   deleteTemplate: (id: string) => ipcRenderer.invoke('delete-template', id),
   importTemplate: () => ipcRenderer.invoke('import-template'),
@@ -36,10 +37,29 @@ const api = {
   pickModelFile: () => ipcRenderer.invoke('pick-model-file'),
   runModel: (opts: object) => ipcRenderer.invoke('run-model', opts),
   stopModel: (id: string) => ipcRenderer.invoke('stop-model', id),
+  onModelOutput: (cb: (data: { id: string; stream: 'stdout' | 'stderr' | 'system'; text: string; timestamp: string }) => void) => {
+    ipcRenderer.removeAllListeners('model-output')
+    ipcRenderer.on('model-output', (_e, data) => cb(data))
+  },
+  removeModelOutputListener: () => ipcRenderer.removeAllListeners('model-output'),
+  onModelExit: (cb: (data: { id: string; code: number | null; signal: string | null }) => void) => {
+    ipcRenderer.removeAllListeners('model-exit')
+    ipcRenderer.on('model-exit', (_e, data) => cb(data))
+  },
+  removeModelExitListener: () => ipcRenderer.removeAllListeners('model-exit'),
   onModelError: (cb: (data: { id: string; error: string }) => void) => {
     ipcRenderer.removeAllListeners('model-error')
     ipcRenderer.on('model-error', (_e, data) => cb(data))
   },
+  onUsageUpdated: (cb: (data: { at: string }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, data: { at: string }) => cb(data)
+    ipcRenderer.on('usage-updated', listener)
+
+    return () => {
+      ipcRenderer.removeListener('usage-updated', listener)
+    }
+  },
+  removeUsageUpdatedListener: () => ipcRenderer.removeAllListeners('usage-updated'),
   checkUpdates: () => ipcRenderer.invoke('check-updates'),
   updateBackendSource: (tagName?: string) => ipcRenderer.invoke('update-backend-source', tagName),
   downloadRelease: (opts: object) => ipcRenderer.invoke('download-release', opts),

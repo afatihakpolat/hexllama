@@ -8,6 +8,8 @@ import SettingsView from './components/SettingsView'
 import HuggingFaceView from './components/HuggingFaceView'
 import ModelsView from './components/ModelsView'
 import LiteLlmView from './components/LiteLlmView'
+import LiveOutputView from './components/LiveOutputView'
+import UsageStatsView from './components/UsageStatsView'
 import CreateModal from './components/CreateModal'
 import UpdateBanner from './components/UpdateBanner'
 import ChatWindow from './components/ChatWindow'
@@ -49,7 +51,7 @@ function MainApp() {
     view, showCreateModal, activeBackend,
     setBackends, setModels, setActiveBackend, setCommandsSchema,
     setCards, setPaths, setReleaseInfo, setCheckingUpdate,
-    setHfDownload, removeHfDownload, addCard,
+    setHfDownload, removeHfDownload, addCard, appendModelOutput,
     upsertModelDownload, removeModelDownload
   } = useStore()
 
@@ -90,6 +92,22 @@ function MainApp() {
       useStore.getState().setCardStatus(data.id, 'error')
       alert(`Model execution error:\n\n${data.error}`)
     })
+  }, [])
+
+  useEffect(() => {
+    window.api.onModelOutput((data) => {
+      appendModelOutput(data)
+    })
+
+    return () => window.api.removeModelOutputListener()
+  }, [appendModelOutput])
+
+  useEffect(() => {
+    window.api.onModelExit((data) => {
+      useStore.getState().setCardStatus(data.id, data.code && data.code !== 0 ? 'error' : 'idle')
+    })
+
+    return () => window.api.removeModelExitListener()
   }, [])
 
   useEffect(() => {
@@ -199,6 +217,8 @@ function MainApp() {
     if (view === 'settings') return <SettingsView />
     if (view === 'litellm') return <LiteLlmView />
     if (view === 'models') return <ModelsView />
+    if (view === 'live-output') return <LiveOutputView />
+    if (view === 'usage-stats') return <UsageStatsView />
     return <CardsView />
   }
 

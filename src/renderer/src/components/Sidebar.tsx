@@ -1,6 +1,6 @@
 import React from 'react'
 import { useStore } from '../store/useStore'
-import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Globe } from 'lucide-react'
+import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Globe, Terminal, BarChart3 } from 'lucide-react'
 
 export default function Sidebar() {
   const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths } = useStore()
@@ -49,6 +49,20 @@ export default function Sidebar() {
       >
         <Globe size={16} />
         LiteLLM
+      </button>
+      <button
+        className={`nav-item ${view === 'live-output' ? 'active' : ''}`}
+        onClick={() => setView('live-output')}
+      >
+        <Terminal size={16} />
+        Live View
+      </button>
+      <button
+        className={`nav-item ${view === 'usage-stats' ? 'active' : ''}`}
+        onClick={() => setView('usage-stats')}
+      >
+        <BarChart3 size={16} />
+        Usage Stats
       </button>
       {backends.length > 0 && (
         <>

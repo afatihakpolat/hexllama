@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, RunningStatus } from '../../../shared/types'
+import type { AppView, Template, BackendVersion, CommandsSchema, ReleaseInfo, RunningStatus, ModelOutputEvent } from '../../../shared/types'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 
@@ -37,7 +37,7 @@ interface AppStore {
   commandsSchema: CommandsSchema | null
   releaseInfo: ReleaseInfo | null
   paths: { models: string; templates: string; backend: string } | null
-  view: 'cards' | 'settings' | 'hub' | 'models' | 'litellm'
+  view: AppView
   themeMode: ThemeMode
   showCreateModal: boolean
   editingTemplate: Template | null
@@ -46,11 +46,13 @@ interface AppStore {
   downloadProgress: { percent: number; phase: string } | null
   templateSearch: string
   modelDownloads: Record<string, ModelDownloadInfo>
+  modelOutput: Record<string, ModelOutputEvent[]>
+  selectedModelOutputId: string | null
   hfDownloads: { repoId: string; filename: string; percent: number; phase: 'downloading' | 'paused' | 'saving' | 'creating_template' | 'done' | 'error' | 'starting'; speed?: number }[]
   hubQuery: string
   hubResults: any[]
   hubSelectedModelId: string | null
-  setView: (v: AppStore['view']) => void
+  setView: (v: AppView) => void
   setThemeMode: (themeMode: ThemeMode) => void
   setShowCreateModal: (show: boolean, template?: Template | null) => void
   setActiveBackend: (b: BackendVersion | null) => void
@@ -66,6 +68,10 @@ interface AppStore {
   setTemplateSearch: (q: string) => void
   upsertModelDownload: (d: ModelDownloadInfo) => void
   removeModelDownload: (id: string) => void
+  appendModelOutput: (event: ModelOutputEvent) => void
+  clearModelOutput: (id: string) => void
+  setSelectedModelOutputId: (id: string | null) => void
+  focusModelOutput: (id: string) => void
   setHfDownload: (d: { repoId: string; filename: string; percent: number; phase: 'downloading' | 'paused' | 'saving' | 'creating_template' | 'done' | 'error' | 'starting'; speed?: number }) => void
   removeHfDownload: (filename: string) => void
   setHubQuery: (q: string) => void
@@ -83,7 +89,7 @@ export const useStore = create<AppStore>((set) => ({
   commandsSchema: null, releaseInfo: null, paths: null,
   view: 'cards', themeMode: getInitialThemeMode(), showCreateModal: false, editingTemplate: null,
   updateDismissed: false, checkingUpdate: false, downloadProgress: null,
-  templateSearch: '', modelDownloads: {}, hfDownloads: [],
+  templateSearch: '', modelDownloads: {}, modelOutput: {}, selectedModelOutputId: null, hfDownloads: [],
   hubQuery: '', hubResults: [], hubSelectedModelId: null,
   setView: (v) => set({ view: v }),
   setThemeMode: (themeMode) => {
@@ -109,6 +115,28 @@ export const useStore = create<AppStore>((set) => ({
   removeModelDownload: (id) => set((s) => {
     const next = { ...s.modelDownloads }; delete next[id]; return { modelDownloads: next }
   }),
+  appendModelOutput: (event) => set((s) => {
+    const nextEntries = [...(s.modelOutput[event.id] || []), event]
+
+    return {
+      modelOutput: {
+        ...s.modelOutput,
+        [event.id]: nextEntries.slice(-400)
+      },
+      selectedModelOutputId: s.selectedModelOutputId || event.id
+    }
+  }),
+  clearModelOutput: (id) => set((s) => {
+    const nextOutput = { ...s.modelOutput }
+    delete nextOutput[id]
+
+    return {
+      modelOutput: nextOutput,
+      selectedModelOutputId: s.selectedModelOutputId === id ? null : s.selectedModelOutputId
+    }
+  }),
+  setSelectedModelOutputId: (id) => set({ selectedModelOutputId: id }),
+  focusModelOutput: (id) => set({ selectedModelOutputId: id, view: 'live-output' }),
   setHfDownload: (d) => set((s) => {
     const arr = s.hfDownloads.filter(x => x.filename !== d.filename)
     return { hfDownloads: [...arr, d] }
@@ -121,7 +149,16 @@ export const useStore = create<AppStore>((set) => ({
   updateCard: (id, partial) => set((s) => ({
     cards: s.cards.map(c => c.template.id === id ? { ...c, template: { ...c.template, ...partial, updatedAt: new Date().toISOString() } } : c)
   })),
-  removeCard: (id) => set((s) => ({ cards: s.cards.filter(c => c.template.id !== id) })),
+  removeCard: (id) => set((s) => {
+    const nextOutput = { ...s.modelOutput }
+    delete nextOutput[id]
+
+    return {
+      cards: s.cards.filter(c => c.template.id !== id),
+      modelOutput: nextOutput,
+      selectedModelOutputId: s.selectedModelOutputId === id ? null : s.selectedModelOutputId
+    }
+  }),
   setCardStatus: (id, status, pid) => set((s) => ({
     cards: s.cards.map(c => c.template.id === id ? { ...c, status, pid: pid ?? c.pid } : c)
   })),

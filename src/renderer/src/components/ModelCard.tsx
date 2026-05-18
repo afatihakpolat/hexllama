@@ -16,7 +16,7 @@ function getFileName(filePath?: string): string {
 }
 
 export default function ModelCard({ card }: Props) {
-  const { toggleCardExpanded, updateCard, setCardStatus, removeCard, backends, activeBackend, commandsSchema, setShowCreateModal, models } = useStore()
+  const { toggleCardExpanded, updateCard, setCardStatus, removeCard, backends, activeBackend, commandsSchema, setShowCreateModal, models, clearModelOutput, focusModelOutput } = useStore()
   const [showMenu, setShowMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const isRunning = card.status === 'running'
@@ -119,16 +119,19 @@ export default function ModelCard({ card }: Props) {
     if (launchMode === 'api' && !args.includes('--no-webui')) {
       args.push('--no-webui')
     }
-    const openBrowser = launchMode === 'chat'
+    clearModelOutput(card.template.id)
     const res = await window.api.runModel({
       id: card.template.id,
       backendPath: targetBackend.path,
       exe: targetBackend.exe,
       args,
-      openBrowser,
+      openBrowser: false,
       port: card.template.serverPort || 8080
     })
-    if (res.success) setCardStatus(card.template.id, 'running', res.pid)
+    if (res.success) {
+      setCardStatus(card.template.id, 'running', res.pid)
+      focusModelOutput(card.template.id)
+    }
     else { alert(`Failed to run: ${res.error}`); setCardStatus(card.template.id, 'error') }
   }
   async function handleDelete() {

@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, LiteLlmInstallStatus, LiteLlmManagerSettingsInput, LiteLlmManagerSnapshot, LiteLlmModelEntry, ReleaseInfo, AppWindowBehaviorSettings } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, LiteLlmInstallStatus, LiteLlmManagerSettingsInput, LiteLlmManagerSnapshot, LiteLlmModelEntry, ReleaseInfo, AppWindowBehaviorSettings, ModelExitEvent, ModelOutputEvent, UsageStatsQuery, UsageStatsSnapshot, UsageUpdatedEvent } from '../../shared/types'
 interface ModelFileInfo {
   name: string
   path: string
@@ -63,6 +63,7 @@ interface LlamaCppApi {
   saveBackendCommands: (backendName: string, schema: object) => Promise<{ success: boolean; error?: string }>
   listTemplates: () => Promise<Template[]>
   getTemplate: (id: string) => Promise<Template | null>
+  getUsageStats: (query?: Partial<UsageStatsQuery>) => Promise<UsageStatsSnapshot>
   saveTemplate: (template: object) => Promise<{ success: boolean; id: string }>
   deleteTemplate: (id: string) => Promise<{ success: boolean }>
   importTemplate: () => Promise<Template | null>
@@ -70,7 +71,13 @@ interface LlamaCppApi {
   pickModelFile: () => Promise<{ name: string; path: string } | null>
   runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number }) => Promise<{ success: boolean; pid?: number; error?: string }>
   stopModel: (id: string) => Promise<{ success: boolean; error?: string }>
+  onModelOutput: (cb: (data: ModelOutputEvent) => void) => void
+  removeModelOutputListener: () => void
+  onModelExit: (cb: (data: ModelExitEvent) => void) => void
+  removeModelExitListener: () => void
   onModelError: (cb: (data: { id: string; error: string }) => void) => void
+  onUsageUpdated: (cb: (data: UsageUpdatedEvent) => void) => () => void
+  removeUsageUpdatedListener: () => void
   checkUpdates: () => Promise<ReleaseInfo>
   updateBackendSource: (tagName?: string) => Promise<{ success: true; result: BackendSourceUpdateResult } | { success: false; error?: string; cancelled?: boolean }>
   downloadRelease: (opts: { url: string; version: string; assetName: string }) => Promise<{ success: boolean; path?: string; error?: string }>

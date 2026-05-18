@@ -33,6 +33,129 @@ export interface CommandsSchema {
   version: string
   categories: CommandCategory[]
 }
+export type AppView = 'cards' | 'settings' | 'hub' | 'models' | 'litellm' | 'live-output' | 'usage-stats'
+export type ModelOutputStream = 'stdout' | 'stderr' | 'system'
+export interface ModelOutputEvent {
+  id: string
+  stream: ModelOutputStream
+  text: string
+  timestamp: string
+}
+export interface ModelExitEvent {
+  id: string
+  code: number | null
+  signal: string | null
+}
+export type UsageStatsWindow = 'today' | '7d' | 'all'
+export type UsageSessionStatus = 'running' | 'stopped' | 'error'
+export interface UsageTimingSnapshot {
+  cacheN?: number
+  promptN?: number
+  promptMs?: number
+  promptPerSecond?: number
+  predictedN?: number
+  predictedMs?: number
+  predictedPerSecond?: number
+}
+export interface UsageRequestRecord {
+  id: string
+  launchId: string
+  templateId: string
+  templateNameSnapshot: string
+  modelPathSnapshot?: string
+  method: string
+  path: string
+  statusCode: number | null
+  startedAt: string
+  finishedAt: string
+  durationMs: number
+  stream: boolean
+  countedExactly: boolean
+  promptTokens: number
+  cacheTokens: number
+  completionTokens: number
+  totalTokens: number
+  timings?: UsageTimingSnapshot
+  error?: string
+}
+export interface UsageLiveSession {
+  launchId: string
+  templateId: string
+  templateName: string
+  modelPath?: string
+  backendVersion?: string
+  publicPort: number
+  upstreamPort: number
+  startedAt: string
+  stoppedAt?: string
+  status: UsageSessionStatus
+  requestCount: number
+  successCount: number
+  errorCount: number
+  exactUsageCount: number
+  promptTokens: number
+  cacheTokens: number
+  completionTokens: number
+  totalTokens: number
+  activeRequests: number
+  lastRequestAt?: string
+  lastEndpoint?: string
+  lastError?: string
+}
+export interface UsageSummaryRollup {
+  requestCount: number
+  successCount: number
+  errorCount: number
+  exactUsageCount: number
+  promptTokens: number
+  cacheTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+export interface UsageTemplateRollup extends UsageSummaryRollup {
+  templateId: string
+  templateName: string
+  modelPath?: string
+  lastRequestAt?: string
+}
+export interface UsageDailyRollup extends UsageSummaryRollup {
+  day: string
+}
+export interface UsageSessionRollup extends UsageSummaryRollup {
+  launchId: string
+  templateId: string
+  templateName: string
+  modelPath?: string
+  backendVersion?: string
+  publicPort?: number
+  upstreamPort?: number
+  startedAt: string
+  stoppedAt?: string
+  lastRequestAt?: string
+  windowStartedAt?: string
+  windowEndedAt?: string
+  windowLastRequestAt?: string
+  lastEndpoint?: string
+  lastError?: string
+  status: UsageSessionStatus
+}
+export interface UsageStatsQuery {
+  window: UsageStatsWindow
+  templateId?: string | null
+  limit?: number
+}
+export interface UsageStatsSnapshot {
+  query: UsageStatsQuery
+  summary: UsageSummaryRollup
+  liveSessions: UsageLiveSession[]
+  recentRequests: UsageRequestRecord[]
+  templateRollups: UsageTemplateRollup[]
+  dailyRollups: UsageDailyRollup[]
+  sessionRollups: UsageSessionRollup[]
+}
+export interface UsageUpdatedEvent {
+  at: string
+}
 export interface AppWindowBehaviorSettings {
   minimizeToTray: boolean
 }

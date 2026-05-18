@@ -5,12 +5,26 @@ import {
 } from 'fs'
 import { join, extname, basename, dirname, resolve, sep, relative } from 'path'
 import { spawn, ChildProcess, execFileSync } from 'child_process'
+import { randomUUID } from 'crypto'
 import https from 'https'
 import http from 'http'
 import { app } from 'electron'
 import extract from 'extract-zip'
 import { USER_DATA_ROOT } from './userData'
 import { getAppWindowBehaviorSettings, saveAppWindowBehaviorSettings } from './appSettings'
+import { startLlamaProxy, type LlamaProxyHandle } from './llamaProxy'
+import { allocateLoopbackPort, getPublicBindHost, prepareUpstreamArgs } from './runtimePorts'
+import { normalizeUsageRecord } from './usageLedger'
+import {
+  applyRequestToPersistedSession,
+  buildUsageStatsSnapshotFromSessions,
+  createUsageSessionFromLive,
+  finalizePersistedSession,
+  loadUsageSessions,
+  migrateLegacyUsageLedger,
+  saveUsageSession,
+  type UsagePersistedSession
+} from './usageSessions'
 import type {
   AppWindowBehaviorSettings,
   LiteLlmInstallStatus,
@@ -19,7 +33,14 @@ import type {
   LiteLlmManagerSettingsInput,
   LiteLlmManagerSnapshot,
   LiteLlmModelEntry,
-  Template
+  ModelExitEvent,
+  ModelOutputEvent,
+  ModelOutputStream,
+  Template,
+  UsageLiveSession,
+  UsageRequestRecord,
+  UsageStatsQuery,
+  UsageUpdatedEvent
 } from '../shared/types'
 
 type ConfigurablePathKind = 'models' | 'backend'
@@ -77,6 +98,9 @@ interface PythonRuntimeCommand {
 }
 
 const SOURCE_UPDATE_SCRIPT_PATH = join(USER_DATA_ROOT, 'update-llama-source.ps1')
+const LEGACY_USAGE_LEDGER_PATH = join(USER_DATA_ROOT, 'llama-usage-history.jsonl')
+const USAGE_SESSIONS_DIR = join(USER_DATA_ROOT, 'usage-sessions')
+const USAGE_SESSIONS_MIGRATION_MARKER = join(USER_DATA_ROOT, 'usage-sessions.migrated')
 const SOURCE_UPDATE_SCRIPT = String.raw`
 param(
   [string]$RepoDir,
@@ -220,6 +244,7 @@ finally {
 `
 
 const APP_ROOT = app.isPackaged ? USER_DATA_ROOT : join(process.cwd())
+const BUNDLED_APP_ROOT = app.isPackaged ? app.getAppPath() : join(process.cwd())
 
 const DEFAULT_PATHS: AppPaths = {
   models: join(APP_ROOT, 'models'),
@@ -867,6 +892,10 @@ async function stopLiteLlmProxyProcess(): Promise<{ success: true; snapshot: Lit
 }
 
 export async function shutdownManagedProcesses(): Promise<void> {
+  for (const id of Array.from(runningProcesses.keys())) {
+    await stopRunningModel(id)
+  }
+
   if (liteLlmProxyProcess?.pid) {
     appendLiteLlmLog(`Stopping LiteLLM proxy process ${liteLlmProxyProcess.pid} during app shutdown`)
     await killProcessTree(liteLlmProxyProcess.pid)
@@ -1232,7 +1261,178 @@ function buildFilesystemSnapshot(): { paths: AppPaths; models: ModelEntry[]; bac
     backends: listBackendsFromDirectory(paths.backend)
   }
 }
+interface ModelProxyRuntime {
+  close: () => Promise<void>
+  publicHost: string
+  publicPort: number
+  upstreamPort: number
+}
+
 const runningProcesses = new Map<string, ChildProcess>()
+const proxyRuntimes = new Map<string, ModelProxyRuntime>()
+migrateLegacyUsageLedger(LEGACY_USAGE_LEDGER_PATH, USAGE_SESSIONS_DIR, USAGE_SESSIONS_MIGRATION_MARKER)
+const persistedUsageSessions = new Map<string, UsagePersistedSession>(
+  loadUsageSessions(USAGE_SESSIONS_DIR).map((session) => [session.launchId, session])
+)
+const recentUsageRequests: UsageRequestRecord[] = []
+const liveUsageSessions = new Map<string, UsageLiveSession>()
+
+function broadcastToRenderer(channel: string, payload: unknown): void {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send(channel, payload)
+    }
+  })
+}
+
+function broadcastModelOutput(payload: ModelOutputEvent): void {
+  broadcastToRenderer('model-output', payload)
+}
+
+function broadcastModelExit(payload: ModelExitEvent): void {
+  broadcastToRenderer('model-exit', payload)
+}
+
+function broadcastUsageUpdated(): void {
+  const payload: UsageUpdatedEvent = { at: new Date().toISOString() }
+  broadcastToRenderer('usage-updated', payload)
+}
+
+function getLiveUsageSessions(): UsageLiveSession[] {
+  return Array.from(liveUsageSessions.values())
+}
+
+function persistUsageSession(session: UsagePersistedSession, templateId?: string): void {
+  try {
+    saveUsageSession(USAGE_SESSIONS_DIR, session)
+  } catch (error) {
+    console.error('[usage-session] failed to persist session:', error)
+    if (templateId) {
+      broadcastModelOutput({
+        id: templateId,
+        stream: 'system',
+        text: `Usage session write failed: ${error instanceof Error ? error.message : String(error)}\n`,
+        timestamp: new Date().toISOString()
+      })
+    }
+  }
+}
+
+function appendRecentUsageRequest(record: UsageRequestRecord): void {
+  recentUsageRequests.unshift(record)
+  if (recentUsageRequests.length > 20) {
+    recentUsageRequests.length = 20
+  }
+}
+
+function registerLiveUsageSession(session: UsageLiveSession): void {
+  liveUsageSessions.set(session.templateId, session)
+  const persistedSession = createUsageSessionFromLive(session)
+  persistedUsageSessions.set(session.launchId, persistedSession)
+  persistUsageSession(persistedSession, session.templateId)
+  broadcastUsageUpdated()
+}
+
+function removeLiveUsageSession(templateId: string): void {
+  if (!liveUsageSessions.has(templateId)) return
+  liveUsageSessions.delete(templateId)
+  broadcastUsageUpdated()
+}
+
+function finalizeUsageSession(templateId: string, status: 'stopped' | 'error', lastError?: string): void {
+  const liveSession = liveUsageSessions.get(templateId)
+  if (!liveSession) return
+
+  const stoppedAt = new Date().toISOString()
+  liveSession.status = status
+  liveSession.stoppedAt = stoppedAt
+  if (lastError) {
+    liveSession.lastError = lastError
+  }
+
+  const persistedSession = persistedUsageSessions.get(liveSession.launchId)
+  if (persistedSession) {
+    finalizePersistedSession(persistedSession, status, stoppedAt, lastError)
+    persistUsageSession(persistedSession, templateId)
+  }
+
+  removeLiveUsageSession(templateId)
+}
+
+function handleUsageRequestStarted(templateId: string, path: string): void {
+  const session = liveUsageSessions.get(templateId)
+  if (!session) return
+
+  session.activeRequests += 1
+  session.lastEndpoint = path
+  broadcastUsageUpdated()
+}
+
+function handleUsageRequestFinished(templateId: string, record: UsageRequestRecord): void {
+  const normalizedRecord = normalizeUsageRecord(record)
+
+  appendRecentUsageRequest(normalizedRecord)
+
+  const liveSession = liveUsageSessions.get(templateId)
+  const persistedSession = persistedUsageSessions.get(normalizedRecord.launchId)
+    ?? (liveSession ? createUsageSessionFromLive(liveSession) : null)
+
+  if (persistedSession) {
+    applyRequestToPersistedSession(persistedSession, normalizedRecord)
+    persistedUsageSessions.set(persistedSession.launchId, persistedSession)
+    persistUsageSession(persistedSession, templateId)
+  }
+
+  if (liveSession) {
+    liveSession.activeRequests = Math.max(0, liveSession.activeRequests - 1)
+    liveSession.requestCount += 1
+    if ((normalizedRecord.statusCode ?? 500) < 400) liveSession.successCount += 1
+    else liveSession.errorCount += 1
+    if (normalizedRecord.countedExactly) {
+      liveSession.exactUsageCount += 1
+      liveSession.promptTokens += normalizedRecord.promptTokens
+      liveSession.cacheTokens += normalizedRecord.cacheTokens
+      liveSession.completionTokens += normalizedRecord.completionTokens
+      liveSession.totalTokens += normalizedRecord.totalTokens
+    }
+    liveSession.lastRequestAt = normalizedRecord.finishedAt
+    liveSession.lastEndpoint = normalizedRecord.path
+    liveSession.lastError = normalizedRecord.error
+  }
+
+  broadcastUsageUpdated()
+}
+
+async function stopProxyRuntime(id: string): Promise<void> {
+  const runtime = proxyRuntimes.get(id)
+  if (!runtime) return
+
+  proxyRuntimes.delete(id)
+  await runtime.close()
+}
+
+async function stopRunningModel(id: string): Promise<void> {
+  const proc = runningProcesses.get(id)
+  if (!proc) return
+
+  await stopProxyRuntime(id)
+  finalizeUsageSession(id, 'stopped')
+  runningProcesses.delete(id)
+  if (typeof proc.pid === 'number') {
+    await killProcessTree(proc.pid)
+  } else {
+    proc.kill()
+  }
+}
+
+async function stopOtherRunningModels(nextTemplateId: string): Promise<void> {
+  const activeTemplateIds = Array.from(runningProcesses.keys())
+    .filter((templateId) => templateId !== nextTemplateId)
+
+  for (const templateId of activeTemplateIds) {
+    await stopRunningModel(templateId)
+  }
+}
 interface DownloadTask {
   id: string
   url: string
@@ -1669,7 +1869,7 @@ export function registerIpcHandlers(): void {
     const commandsPath = join(backendDir, backendName, 'commands.json')
     if (!isSafePath(backendDir, commandsPath)) return null
     if (existsSync(commandsPath)) return JSON.parse(readFileSync(commandsPath, 'utf-8'))
-    const defaultPath = join(APP_ROOT, 'resources', 'commands.json')
+    const defaultPath = join(BUNDLED_APP_ROOT, 'resources', 'commands.json')
     if (existsSync(defaultPath)) return JSON.parse(readFileSync(defaultPath, 'utf-8'))
     return null
   })
@@ -1691,6 +1891,15 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('get-template', (_e, templateId: string) => {
     return getTemplateById(templateId)
+  })
+  ipcMain.handle('get-usage-stats', (_e, partialQuery?: Partial<UsageStatsQuery>) => {
+    const query: UsageStatsQuery = {
+      window: partialQuery?.window ?? '7d',
+      templateId: partialQuery?.templateId ?? null,
+      limit: partialQuery?.limit ?? 20
+    }
+
+    return buildUsageStatsSnapshotFromSessions(Array.from(persistedUsageSessions.values()), getLiveUsageSessions(), recentUsageRequests, query)
   })
   ipcMain.handle('save-template', (_e, template: Record<string, unknown>) => {
     const templatesDir = getAppPaths().templates
@@ -1724,27 +1933,104 @@ export function registerIpcHandlers(): void {
     if (r.canceled || !r.filePaths.length) return null
     return { name: basename(r.filePaths[0]), path: r.filePaths[0] }
   })
-  ipcMain.handle('run-model', (_e, opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number }) => {
+  ipcMain.handle('run-model', async (_e, opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number }) => {
     if (runningProcesses.has(opts.id)) return { success: false, error: 'Already running' }
     const backendDir = getAppPaths().backend
     const exePath = join(opts.backendPath, opts.exe)
     if (!isSafePath(backendDir, exePath)) return { success: false, error: 'Access denied' }
     if (!existsSync(exePath)) return { success: false, error: `Executable not found: ${exePath}` }
+
+    const template = getTemplateById(opts.id)
+    const launchId = randomUUID()
+    const publicHost = getPublicBindHost(opts.args)
+
     try {
-      const proc = spawn(exePath, opts.args, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
-      proc.stderr?.on('data', (d) => console.error('[llama-server]', d.toString()))
-      proc.stdout?.on('data', (d) => console.log('[llama-server]', d.toString()))
-      proc.on('error', (err: any) => {
+      await stopOtherRunningModels(opts.id)
+
+      const upstreamPort = await allocateLoopbackPort()
+      const upstreamArgs = prepareUpstreamArgs(opts.args, upstreamPort)
+      const proxyHandle: LlamaProxyHandle = await startLlamaProxy({
+        launchId,
+        templateId: opts.id,
+        templateNameSnapshot: template?.name ?? opts.id,
+        modelPathSnapshot: template?.modelPath,
+        publicHost,
+        publicPort: opts.port,
+        upstreamHost: '127.0.0.1',
+        upstreamPort,
+        onRequestStarted: (path) => handleUsageRequestStarted(opts.id, path),
+        onRequestFinished: (record) => handleUsageRequestFinished(opts.id, record)
+      })
+      const proc = spawn(exePath, upstreamArgs, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
+      const commandPreview = [basename(exePath), ...upstreamArgs.map((arg) => /\s/.test(arg) ? JSON.stringify(arg) : arg)].join(' ')
+      const emitOutput = (stream: ModelOutputStream, text: string) => {
+        if (!text) return
+
+        broadcastModelOutput({
+          id: opts.id,
+          stream,
+          text,
+          timestamp: new Date().toISOString()
+        })
+      }
+
+      proc.stdout?.setEncoding('utf8')
+      proc.stderr?.setEncoding('utf8')
+      proc.stdout?.on('data', (chunk: string) => emitOutput('stdout', chunk))
+      proc.stderr?.on('data', (chunk: string) => emitOutput('stderr', chunk))
+      proc.on('error', async (err: any) => {
         let msg = String(err)
         if (err.code === 'UNKNOWN' && opts.backendPath.toLowerCase().includes('arm64') && process.arch !== 'arm64') {
           msg = 'Architecture mismatch: You are trying to run an ARM64 backend on an x64 system. Please delete this backend in Settings and download the x64 version.'
         }
+        emitOutput('system', `Process failed to start: ${msg}\n`)
         console.error('[llama-server] spawn error:', msg)
         runningProcesses.delete(opts.id)
+        await stopProxyRuntime(opts.id)
+        finalizeUsageSession(opts.id, 'error', msg)
         _e.sender.send('model-error', { id: opts.id, error: msg })
       })
       runningProcesses.set(opts.id, proc)
-      proc.on('exit', () => runningProcesses.delete(opts.id))
+      proxyRuntimes.set(opts.id, {
+        close: proxyHandle.close,
+        publicHost,
+        publicPort: opts.port,
+        upstreamPort
+      })
+      registerLiveUsageSession({
+        launchId,
+        templateId: opts.id,
+        templateName: template?.name ?? opts.id,
+        modelPath: template?.modelPath,
+        backendVersion: basename(opts.backendPath),
+        publicPort: opts.port,
+        upstreamPort,
+        startedAt: new Date().toISOString(),
+        status: 'running',
+        requestCount: 0,
+        successCount: 0,
+        errorCount: 0,
+        exactUsageCount: 0,
+        promptTokens: 0,
+        cacheTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        activeRequests: 0
+      })
+      emitOutput('system', `Proxy listening on http://${publicHost}:${opts.port} and forwarding to http://127.0.0.1:${upstreamPort}.\n`)
+      emitOutput('system', `Launching upstream: ${commandPreview}\n`)
+      emitOutput('system', `Process started${proc.pid ? ` (pid ${proc.pid})` : ''}.\n`)
+      proc.on('exit', async (code, signal) => {
+        runningProcesses.delete(opts.id)
+        await stopProxyRuntime(opts.id)
+        finalizeUsageSession(opts.id, code !== null && code !== 0 ? 'error' : signal ? 'error' : 'stopped')
+        emitOutput('system', `Process exited${code !== null ? ` with code ${code}` : ''}${signal ? ` (${signal})` : ''}.\n`)
+        broadcastModelExit({
+          id: opts.id,
+          code,
+          signal
+        })
+      })
       if (opts.openBrowser) {
         setTimeout(() => {
           openChatWindow(opts.port)
@@ -1752,6 +2038,7 @@ export function registerIpcHandlers(): void {
       }
       return { success: true, pid: proc.pid }
     } catch (err: any) {
+      await stopProxyRuntime(opts.id)
       if (err.code === 'UNKNOWN' && opts.backendPath.toLowerCase().includes('arm64') && process.arch !== 'arm64') {
         return { success: false, error: 'Architecture mismatch: You are trying to run an ARM64 backend on an x64 system. Please delete this backend in Settings and download the x64 version.' }
       }
@@ -1801,10 +2088,10 @@ export function registerIpcHandlers(): void {
       return { success: false, error: String(error) }
     }
   })
-  ipcMain.handle('stop-model', (_e, id: string) => {
+  ipcMain.handle('stop-model', async (_e, id: string) => {
     const proc = runningProcesses.get(id)
     if (!proc) return { success: false, error: 'Not running' }
-    proc.kill(); runningProcesses.delete(id)
+    await stopRunningModel(id)
     return { success: true }
   })
 

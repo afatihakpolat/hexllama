@@ -75,10 +75,35 @@ npm install
 npm run dev
 ```
 
-To compile the application into an executable for your current OS:
+To build the production app bundles without creating an installer:
 ```bash
 npm run build
 ```
+
+To package an installable desktop build for your current OS:
+```bash
+npm run package
+```
+
+On Windows, `npm run package` uses `electron-builder` to produce:
+- an NSIS installer (`.exe`)
+- a portable archive (`.zip`)
+
+The packaged artifacts are written to the default `dist/` output directory.
+
+### Windows Install Flow
+If you are building and installing this yourself on Windows:
+
+1. Install Node.js 18+.
+2. Run `npm install` in the repo root.
+3. Run `npm run package`.
+4. Open the generated installer from `dist/`.
+5. Follow the installer prompts and choose the install directory if needed.
+
+Notes:
+- The current config builds Windows `x64` and `arm64` targets.
+- The installer is not code-signed in this repo, so Windows SmartScreen may warn until you trust it locally.
+- Uninstall keeps app data by default, so templates and settings are preserved unless you remove them manually.
 
 ## Acknowledgements
 

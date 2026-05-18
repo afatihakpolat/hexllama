@@ -6,6 +6,7 @@ files:
   - out/main/**/*
   - out/preload/**/*
   - out/renderer/**/*
+  - resources/commands.json
 win:
   target:
     - target: nsis
