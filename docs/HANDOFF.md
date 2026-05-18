@@ -36,8 +36,16 @@
 - Added a main-process compatibility bootstrap so packaged upgrades keep using the legacy Hexllama user-data directory when it already exists, preserving templates, folder settings, LiteLLM settings, and renderer local storage through the rename.
 - Added a persisted minimize-to-tray window behavior setting with a Settings toggle; when enabled, clicking the main window X hides LlamaDeck to a tray icon with reopen and quit actions instead of closing the app.
 - Fixed packaged minimize-to-tray on Windows by shipping the tray icon asset with the app and extending main-process icon resolution to packaged resource paths before creating the tray.
+- Updated the template Advanced Parameters editor so explicitly configured flags are grouped into a dedicated top section in the default view, while search keeps parameters in their native categories to avoid state-dependent result jumps.
+- Fixed default-true boolean parameters in the template editor so their switches render as on by default, toggling them off stores an explicit `false`, and launch/preview/import paths emit the correct `--no-*` flag instead of silently dropping the setting.
 - Fixed packaged builds so imported and existing templates can still load the fallback advanced-parameter schema even when a backend-specific `commands.json` is absent; the app now resolves the bundled schema from the packaged app root and includes `resources/commands.json` in the installer payload.
 - Added a Live Output page that streams llama.cpp stdout and stderr over IPC into an in-memory renderer buffer; starting a model now focuses that page, nothing is persisted to disk, and process exit updates the card status out of running.
+- Backend installs and source updates now preserve the current global active backend instead of auto-switching it to the newest build, so templates using `Default (Active)` keep following the user's chosen global backend.
+- Added a CPU-only source-build option alongside CUDA builds: Settings now exposes separate `Build CPU Only` and `Build CUDA` actions, the source-build IPC accepts a build flavor, CPU builds skip NVCC/CUDA requirements, and CPU artifacts are written into a separate `b####-cpu` backend folder so they can coexist with CUDA builds.
+- Persisted the global active backend selection in renderer storage so the user's chosen `Default (Active)` backend survives app restarts instead of resetting to the first listed backend.
+- Stopped source-build refreshes from rewriting pinned template backends; explicitly pinned templates keep their backend choice, while `Default (Active)` templates continue following the persisted global active backend.
+- Added explicit backend flavor metadata and UI labeling so CPU and CUDA builds no longer appear as duplicate `b####` entries; backend names now render as labels like `b#### · CPU` or `b#### · CUDA`, with a flavor badge in Settings.
+- Settings and the update banner now hide source-build buttons for build flavors that are already installed for the latest upstream tag; if both latest CPU and CUDA variants exist, the build actions disappear entirely.
 
 ## Verification
 - `npm run build` after switching usage persistence from raw request ledger rows to compact per-session summaries with an in-memory recent-request buffer
@@ -62,14 +70,20 @@
 - `npm run build` after renaming the app to LlamaDeck and adding legacy user-data compatibility for packaged upgrades
 - `npm run build` after adding the persisted minimize-to-tray main-window behavior and Settings toggle
 - `npm run build` after packaging the tray icon asset and hardening packaged icon resolution for minimize-to-tray
+- `npm run build` after adding top-grouped overridden parameters in the template Advanced Parameters editor
+- `npm run build` after fixing default-true boolean flags to emit `--no-*` args when switched off
 - `npm run build` and `npm run package` after fixing bundled commands-schema loading for packaged builds
 - `npm run build` after adding in-memory live model output streaming and the Live Output page
+- `npm run build` after adding CPU-only backend source builds, active-backend persistence, and safe failed-build cleanup
+- `npm run build` after adding backend flavor labels so CPU and CUDA backends render distinctly across the UI
+- `npm run build` after hiding CPU/CUDA build buttons when the latest installed variants already exist
 
 ## Next Recommended Check
 - Manual smoke test for proxy-backed usage stats: start an API template, send both standard and streaming requests through `/v1/chat/completions`, `/completions`, or `/completion`, confirm the request rows appear live on Usage Stats, verify input/cache/output/total stay internally consistent between the summary card and request rows, stop the session, restart the app, and confirm historical totals remain while Recent Requests resets.
 - Manual smoke test for usage cost analysis: set non-zero input/cache/output rates in the Cost tab, reload the app, confirm the same rates persist, and verify overall/session/template/day/request cost totals recalculate as expected when the configured rates change.
 - Add the smallest automated tests for `src/main/runtimePorts.ts`, `src/main/usageLedger.ts`, and the extraction path in `src/main/llamaProxy.ts`.
-- Manual smoke test in the running app: point the backend folder at a llama.cpp repo, run "Check Now", trigger "Build From Source", confirm a new `b####` folder appears without deleting older builds, confirm pinned templates move to the new backend, and confirm cancel stops without an error alert.
+- Manual smoke test in the running app: point the backend folder at a llama.cpp repo, run "Check Now", trigger "Build From Source", confirm a new `b####` folder appears without deleting older builds, confirm the active backend stays unchanged unless the user changes it, and confirm cancel stops without an error alert.
+- Manual smoke test for CPU/CUDA source builds: from Settings, build the latest CUDA backend and then `Build CPU Only`, confirm the CPU build lands in a separate `b####-cpu` folder, confirm the global active backend does not change automatically, pin one embedding template to the CPU backend manually, and verify standard `Default (Active)` templates still use the persisted global active backend.
 - Manual smoke test for LiteLLM manager: open the LiteLLM page, confirm Python detection, install or update LiteLLM if needed, save the default config, set a local proxy API key if your config requires auth, start the proxy, test the local proxy, refresh remote models, and confirm a local template still starts against a local backend as before.
 - Manual smoke test for theming: switch between Light, Dark, and System in Settings, open a chat window, confirm the chat window follows the same theme, and if using System, toggle the OS theme while both windows stay open.
 - Manual smoke test for tray behavior: enable "Minimize To Tray" in Settings, click the main window X, confirm the app hides and shows a tray icon, restore it from the tray icon/menu, and confirm choosing Quit from the tray still shuts down managed processes.

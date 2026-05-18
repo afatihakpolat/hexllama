@@ -2,6 +2,14 @@ import React, { useMemo, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { Box, Cpu, Zap, Database, Sliders, Wind, Server, FileText, GitBranch, Search, Star, Lock } from 'lucide-react'
 import type { CommandParam } from '../../../shared/types'
+import { getBooleanCommandFlag, isDefaultTrueBooleanCommand } from '../utils/commandArgs'
+
+interface DisplayCategory {
+  name: string
+  icon: string
+  commands: CommandParam[]
+}
+
 const iconMap: Record<string, React.ReactNode> = {
   Box: <Box size={14} />,
   Cpu: <Cpu size={14} />,
@@ -99,6 +107,10 @@ function adjustNumberValue(currentValue: unknown, delta: number, cmd: CommandPar
   return Number(nextValue.toFixed(precision))
 }
 
+function isCommandConfigured(cmd: CommandParam, args: Record<string, any>): boolean {
+  return Object.prototype.hasOwnProperty.call(args, cmd.arg)
+}
+
 interface Props {
   templateId?: string
   args: Record<string, any>
@@ -116,13 +128,26 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
   const disabled = disabledProp || isRunning
   const cmdPreview = useMemo(() => {
     const parts: React.ReactNode[] = []
+    const commandsByArg = new Map<string, CommandParam>()
+
+    commandsSchema?.categories.forEach((category) => {
+      category.commands.forEach((command) => {
+        commandsByArg.set(command.arg, command)
+      })
+    })
+
     parts.push(<span key="base">llama-server</span>)
     const finalModelPath = card?.template.modelPath || modelPathFallback
     if (finalModelPath) {
         parts.push(' ', <span key="arg-m" className="arg">-m</span>, ' ', <span key="val-m" className="val">"{finalModelPath}"</span>)
     }
     Object.entries(args).forEach(([key, val]) => {
-      if (val === true) {
+      const command = commandsByArg.get(key)
+      const booleanFlag = command ? getBooleanCommandFlag(command, val) : null
+
+      if (booleanFlag) {
+        parts.push(' ', <span key={`arg-${booleanFlag}`} className="arg">{booleanFlag}</span>)
+      } else if (val === true) {
         parts.push(' ', <span key={`arg-${key}`} className="arg">{key}</span>)
       } else if (val !== false && val !== null && val !== '') {
         parts.push(' ', <span key={`arg-${key}`} className="arg">{key}</span>, ' ', <span key={`val-${key}`} className="val">{val}</span>)
@@ -133,14 +158,16 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
          parts.push(' ', <span key="arg-port" className="arg">--port</span>, ' ', <span key="val-port" className="val">{finalPort}</span>)
     }
     return parts
-  }, [args, cards, templateId, modelPathFallback, serverPortFallback])
-  const filteredCategories = useMemo(() => {
+  }, [args, cards, commandsSchema, templateId, modelPathFallback, serverPortFallback])
+  const filteredCategories = useMemo<DisplayCategory[]>(() => {
     if (!commandsSchema) return []
     let allCommands: CommandParam[] = []
     commandsSchema.categories.forEach(cat => allCommands.push(...cat.commands))
     const q = searchQuery.toLowerCase()
+    let visibleCategories: DisplayCategory[]
+
     if (q) {
-      return commandsSchema.categories.map(cat => ({
+      visibleCategories = commandsSchema.categories.map(cat => ({
         ...cat,
         commands: cat.commands.filter(cmd => 
           cmd.label.toLowerCase().includes(q) || 
@@ -148,31 +175,65 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
           (cmd.short && cmd.short.toLowerCase().includes(q))
         )
       })).filter(cat => cat.commands.length > 0)
+    } else {
+      const featuredCommands = allCommands.filter(c => FEATURED_ARGS.includes(c.arg))
+      const cats = commandsSchema.categories.map(cat => ({
+        ...cat,
+        commands: cat.commands.filter(c => !FEATURED_ARGS.includes(c.arg))
+      })).filter(cat => cat.commands.length > 0)
+
+      if (featuredCommands.length > 0) {
+        featuredCommands.sort((a, b) => FEATURED_ARGS.indexOf(a.arg) - FEATURED_ARGS.indexOf(b.arg))
+        cats.unshift({
+          name: 'Main Settings',
+          icon: 'Star',
+          commands: featuredCommands
+        })
+      }
+
+      visibleCategories = cats
     }
-    const featuredCommands = allCommands.filter(c => FEATURED_ARGS.includes(c.arg))
-    const cats = commandsSchema.categories.map(cat => ({
-      ...cat,
-      commands: cat.commands.filter(c => !FEATURED_ARGS.includes(c.arg))
-    })).filter(cat => cat.commands.length > 0)
-    if (featuredCommands.length > 0) {
-      featuredCommands.sort((a, b) => FEATURED_ARGS.indexOf(a.arg) - FEATURED_ARGS.indexOf(b.arg))
-      cats.unshift({
-        name: 'Main Settings',
-        icon: 'Star',
-        commands: featuredCommands
-      })
+
+    if (q) {
+      return visibleCategories
     }
-    return cats
-  }, [commandsSchema, searchQuery])
+
+    const configuredCommands = visibleCategories.flatMap((category) => {
+      return category.commands.filter((command) => isCommandConfigured(command, args))
+    })
+
+    if (configuredCommands.length === 0) {
+      return visibleCategories
+    }
+
+    const configuredCommandArgs = new Set(configuredCommands.map((command) => command.arg))
+    const remainingCategories = visibleCategories.map((category) => ({
+      ...category,
+      commands: category.commands.filter((command) => !configuredCommandArgs.has(command.arg))
+    })).filter((category) => category.commands.length > 0)
+
+    return [{
+      name: 'Configured Parameters',
+      icon: 'Sliders',
+      commands: configuredCommands
+    }, ...remainingCategories]
+  }, [args, commandsSchema, searchQuery])
   if (!commandsSchema) {
     return <div className="text-muted text-sm">No commands schema loaded. Ensure a backend is installed.</div>
   }
-  const handleUpdate = (argName: string, value: any) => {
+  const handleUpdate = (cmd: CommandParam, value: any) => {
     const newArgs = { ...args }
-    if (value === null || value === false || value === '') {
-        delete newArgs[argName]
+    if (cmd.type === 'boolean') {
+      const shouldRemove = value === cmd.default || (value === false && !isDefaultTrueBooleanCommand(cmd))
+      if (shouldRemove) {
+        delete newArgs[cmd.arg]
+      } else {
+        newArgs[cmd.arg] = value
+      }
+    } else if (value === null || value === '') {
+        delete newArgs[cmd.arg]
     } else {
-        newArgs[argName] = value
+        newArgs[cmd.arg] = value
     }
     if (onChange) {
         onChange(newArgs)
@@ -182,8 +243,13 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
   }
   const renderCommand = (cmd: CommandParam) => {
     if (cmd.arg === '--model' || cmd.arg === '--port') return null
-    const val = args[cmd.arg] ?? (cmd.type === 'boolean' ? false : '')
-    const isActive = args[cmd.arg] !== undefined && args[cmd.arg] !== false && args[cmd.arg] !== ''
+    const hasExplicitValue = Object.prototype.hasOwnProperty.call(args, cmd.arg)
+    const val = hasExplicitValue
+      ? args[cmd.arg]
+      : cmd.type === 'boolean'
+        ? cmd.default === true
+        : ''
+    const isActive = hasExplicitValue
     const defaultValue = formatDefaultValue(cmd.default)
     const descriptionRange = getDescriptionRange(cmd)
     const numericStep = cmd.type === 'number' ? getNumberStep(cmd) : undefined
@@ -203,7 +269,7 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
           {cmd.type === 'boolean' && (
             <div className="toggle-wrap">
               <label className="toggle" style={disabled ? { opacity: 0.45, cursor: 'not-allowed' } : {}}>
-                <input type="checkbox" checked={!!val} onChange={(e) => handleUpdate(cmd.arg, e.target.checked)} disabled={disabled} />
+                <input type="checkbox" checked={!!val} onChange={(e) => handleUpdate(cmd, e.target.checked)} disabled={disabled} />
                 <span className="toggle-track"></span>
                 <span className="toggle-thumb"></span>
               </label>
@@ -211,27 +277,27 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
           )}
           {cmd.type === 'number' && (
             <div className="num-input-wrap">
-              <button type="button" className="num-btn" onClick={() => handleUpdate(cmd.arg, adjustNumberValue(val, -1, cmd))} disabled={disabled}>-</button>
+              <button type="button" className="num-btn" onClick={() => handleUpdate(cmd, adjustNumberValue(val, -1, cmd))} disabled={disabled}>-</button>
               <input
                 type="number" className="cmd-input num" value={val} placeholder={cmd.default?.toString()} min={numericMin} max={numericMax} step={numericStep}
-                onChange={(e) => handleUpdate(cmd.arg, e.target.value === '' ? '' : Number(e.target.value))}
+                onChange={(e) => handleUpdate(cmd, e.target.value === '' ? '' : Number(e.target.value))}
                 disabled={disabled}
               />
-              <button type="button" className="num-btn" onClick={() => handleUpdate(cmd.arg, adjustNumberValue(val, 1, cmd))} disabled={disabled}>+</button>
+              <button type="button" className="num-btn" onClick={() => handleUpdate(cmd, adjustNumberValue(val, 1, cmd))} disabled={disabled}>+</button>
             </div>
           )}
           {cmd.type === 'string' && (
-            <input type="text" className="cmd-input" value={val} placeholder={cmd.placeholder || cmd.default?.toString()} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} />
+            <input type="text" className="cmd-input" value={val} placeholder={cmd.placeholder || cmd.default?.toString()} onChange={(e) => handleUpdate(cmd, e.target.value)} disabled={disabled} />
           )}
           {cmd.type === 'select' && (
-            <select className="cmd-select" value={val} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled}>
+            <select className="cmd-select" value={val} onChange={(e) => handleUpdate(cmd, e.target.value)} disabled={disabled}>
               <option value="">{defaultValue !== null ? `Default (${defaultValue})` : 'Default'}</option>
               {cmd.options?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
             </select>
           )}
         </div>
         {cmd.type === 'text' && (
-          <textarea className="cmd-textarea" value={val} placeholder={cmd.placeholder} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} />
+          <textarea className="cmd-textarea" value={val} placeholder={cmd.placeholder} onChange={(e) => handleUpdate(cmd, e.target.value)} disabled={disabled} />
         )}
       </div>
     )

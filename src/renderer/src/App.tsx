@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react'
 import { useStore } from './store/useStore'
 import type { ThemeMode } from './store/useStore'
+import { readStoredActiveBackendName } from './store/useStore'
 import Titlebar from './components/Titlebar'
 import Sidebar from './components/Sidebar'
 import CardsView from './components/CardsView'
@@ -67,8 +68,13 @@ function MainApp() {
         setBackends(backendsData)
         setModels(modelsData)
         if (backendsData.length > 0) {
-          setActiveBackend(backendsData[0])
-          const cmds = await window.api.getCommands(backendsData[0].name)
+          const storedActiveBackendName = readStoredActiveBackendName()
+          const nextActiveBackend = (storedActiveBackendName
+            ? backendsData.find((backend) => backend.name === storedActiveBackendName)
+            : undefined) ?? backendsData[0]
+
+          setActiveBackend(nextActiveBackend)
+          const cmds = await window.api.getCommands(nextActiveBackend.name)
           setCommandsSchema(cmds)
         } else {
           const cmds = await window.api.getCommands('')

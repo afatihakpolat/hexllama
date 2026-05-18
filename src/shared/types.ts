@@ -3,9 +3,12 @@ export interface ModelFile {
   path: string
 }
 
+export type BackendBuildFlavor = 'cuda' | 'cpu'
+
 export interface BackendVersion {
   name: string
   displayName: string
+  flavor: BackendBuildFlavor
   path: string
   hasCommands: boolean
   exe: string | null

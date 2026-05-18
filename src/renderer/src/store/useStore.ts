@@ -4,6 +4,7 @@ import type { AppView, Template, BackendVersion, CommandsSchema, ReleaseInfo, Ru
 export type ThemeMode = 'system' | 'light' | 'dark'
 
 const THEME_STORAGE_KEY = 'hexllama_theme'
+const ACTIVE_BACKEND_STORAGE_KEY = 'hexllama_active_backend'
 
 function getInitialThemeMode(): ThemeMode {
   if (typeof window === 'undefined') return 'system'
@@ -12,6 +13,13 @@ function getInitialThemeMode(): ThemeMode {
   return storedValue === 'light' || storedValue === 'dark' || storedValue === 'system'
     ? storedValue
     : 'system'
+}
+
+export function readStoredActiveBackendName(): string | null {
+  if (typeof window === 'undefined') return null
+
+  const storedValue = window.localStorage.getItem(ACTIVE_BACKEND_STORAGE_KEY)
+  return storedValue?.trim() || null
 }
 
 interface CardState {
@@ -100,7 +108,17 @@ export const useStore = create<AppStore>((set) => ({
     set({ themeMode })
   },
   setShowCreateModal: (show, template = null) => set({ showCreateModal: show, editingTemplate: template }),
-  setActiveBackend: (b) => set({ activeBackend: b }),
+  setActiveBackend: (b) => {
+    if (typeof window !== 'undefined') {
+      if (b?.name) {
+        window.localStorage.setItem(ACTIVE_BACKEND_STORAGE_KEY, b.name)
+      } else {
+        window.localStorage.removeItem(ACTIVE_BACKEND_STORAGE_KEY)
+      }
+    }
+
+    set({ activeBackend: b })
+  },
   setCommandsSchema: (s) => set({ commandsSchema: s }),
   setBackends: (b) => set({ backends: b }),
   setModels: (m) => set({ models: m }),

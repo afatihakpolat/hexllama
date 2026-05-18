@@ -32,6 +32,7 @@ import {
 } from './usageSessions'
 import type {
   AppWindowBehaviorSettings,
+  BackendBuildFlavor,
   LiteLlmInstallStatus,
   LiteLlmLogLevel,
   LiteLlmManagerSettings,
@@ -73,6 +74,7 @@ interface ModelEntry {
 interface BackendEntry {
   name: string
   displayName: string
+  flavor: BackendBuildFlavor
   path: string
   hasCommands: boolean
   exe: string | null
@@ -111,6 +113,7 @@ const SOURCE_UPDATE_SCRIPT = String.raw`
 param(
   [string]$RepoDir,
   [string]$TargetRef,
+  [string]$BuildFlavor = "cuda",
   [string]$CudaArch = "native",
   [string]$BuildType = "Release"
 )
@@ -164,7 +167,16 @@ foreach ($compilerEnv in @("CC", "CXX", "CUDAHOSTCXX")) {
   Remove-Item "Env:$compilerEnv" -ErrorAction SilentlyContinue
 }
 
-foreach ($cmd in @("git", "cmake", "ninja", "nvcc")) {
+if ($BuildFlavor -notin @("cuda", "cpu")) {
+  throw "Unsupported build flavor: $BuildFlavor"
+}
+
+$requiredCommands = @("git", "cmake", "ninja")
+if ($BuildFlavor -eq "cuda") {
+  $requiredCommands += "nvcc"
+}
+
+foreach ($cmd in $requiredCommands) {
   if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
     throw "Missing required command: $cmd"
   }
@@ -193,12 +205,13 @@ try {
     throw "Could not derive a llama.cpp build tag from git."
   }
 
-  $targetBuildDir = Join-Path $RepoDir $buildTag
+  $buildName = if ($BuildFlavor -eq "cpu") { "$buildTag-cpu" } else { $buildTag }
+  $targetBuildDir = Join-Path $RepoDir $buildName
   $serverExe = Join-Path $targetBuildDir "bin\llama-server.exe"
 
   if (Test-Path $serverExe) {
     Write-Phase "finalizing" 95 "Latest build already exists"
-    Write-Output "HEXLLAMA_RESULT|$buildTag|$targetBuildDir"
+    Write-Output "HEXLLAMA_RESULT|$buildName|$targetBuildDir"
     exit 0
   }
 
@@ -206,26 +219,33 @@ try {
     Remove-Item -Recurse -Force $targetBuildDir
   }
 
-  Write-Phase "configuring" 42 "Configuring $buildTag"
+  Write-Phase "configuring" 42 "Configuring $buildName"
   $cmakeArgs = @(
     "-S", ".",
     "-B", $targetBuildDir,
     "-G", "Ninja",
-    "-DGGML_CUDA=ON",
     "-DCMAKE_BUILD_TYPE=$BuildType",
     "-DCMAKE_C_COMPILER=$clPath",
-    "-DCMAKE_CXX_COMPILER=$clPath",
-    "-DCMAKE_CUDA_HOST_COMPILER=$clPath"
+    "-DCMAKE_CXX_COMPILER=$clPath"
   )
 
-  if ($CudaArch -and $CudaArch.Trim()) {
-    $cmakeArgs += "-DCMAKE_CUDA_ARCHITECTURES=$CudaArch"
+  if ($BuildFlavor -eq "cuda") {
+    $cmakeArgs += @(
+      "-DGGML_CUDA=ON",
+      "-DCMAKE_CUDA_HOST_COMPILER=$clPath"
+    )
+
+    if ($CudaArch -and $CudaArch.Trim()) {
+      $cmakeArgs += "-DCMAKE_CUDA_ARCHITECTURES=$CudaArch"
+    }
+  } else {
+    $cmakeArgs += "-DGGML_CUDA=OFF"
   }
 
   & cmake @cmakeArgs
   if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
 
-  Write-Phase "building" 72 "Building $buildTag"
+  Write-Phase "building" 72 "Building $buildName"
   & cmake --build $targetBuildDir --config $BuildType -j
   if ($LASTEXITCODE -ne 0) { throw "Build failed." }
 
@@ -234,8 +254,8 @@ try {
   }
 
   $buildSucceeded = $true
-  Write-Phase "finalizing" 95 "Verifying $buildTag"
-  Write-Output "HEXLLAMA_RESULT|$buildTag|$targetBuildDir"
+  Write-Phase "finalizing" 95 "Verifying $buildName"
+  Write-Output "HEXLLAMA_RESULT|$buildName|$targetBuildDir"
 }
 catch {
   if (-not $buildSucceeded -and $targetBuildDir -and (Test-Path $targetBuildDir)) {
@@ -967,19 +987,29 @@ function findBackendExecutable(dir: string, depth = 0): string | null {
   return null
 }
 
+function getBackendFlavor(name: string): BackendBuildFlavor {
+  return /-cpu$/i.test(name) ? 'cpu' : 'cuda'
+}
+
+function getBackendBaseName(name: string): string {
+  return name.replace(/-cpu$/i, '')
+}
+
 function getBackendDisplayName(basePath: string, fallbackName: string): string {
   const versionFile = join(basePath, 'llama-version.cmake')
+  const flavor = getBackendFlavor(fallbackName)
+  const fallbackLabel = `${getBackendBaseName(fallbackName)} · ${flavor.toUpperCase()}`
 
   try {
-    if (!existsSync(versionFile)) return fallbackName
+    if (!existsSync(versionFile)) return fallbackLabel
 
     const content = readFileSync(versionFile, 'utf-8')
     const match = content.match(/set\(PACKAGE_VERSION\s+"\d+\.\d+\.(\d+)"\)/)
-    if (!match) return fallbackName
+    if (!match) return fallbackLabel
 
-    return `b${match[1]}`
+    return `b${match[1]} · ${flavor.toUpperCase()}`
   } catch {
-    return fallbackName
+    return fallbackLabel
   }
 }
 
@@ -1099,8 +1129,16 @@ function getConfiguredCudaArch(repoDir: string): string {
   return 'native'
 }
 
+function getSourceBuildName(tagName: string, flavor: BackendBuildFlavor): string {
+  return flavor === 'cpu' ? `${tagName}-cpu` : tagName
+}
+
 function removeFailedSourceBuild(repoDir: string, buildTagName: string): void {
+  if (!buildTagName.trim()) return
+
   const buildDir = join(repoDir, buildTagName)
+  const relativeBuildPath = relative(repoDir, buildDir)
+  if (!relativeBuildPath || relativeBuildPath.startsWith('..') || resolve(buildDir) === resolve(repoDir)) return
   if (!existsSync(buildDir)) return
 
   try {
@@ -1187,28 +1225,10 @@ function saveTemplateToDirectory(templatesDir: string, template: Template): void
   writeFileSync(join(templatesDir, `${template.id}.json`), JSON.stringify(persisted, null, 2))
 }
 
-function migrateTemplatesToBackend(backendName: string): Template[] {
-  const templatesDir = getAppPaths().templates
-  const templates = listTemplatesFromDirectory(templatesDir)
-  const now = new Date().toISOString()
-
-  for (const template of templates) {
-    if (!template.backendVersion) continue
-
-    saveTemplateToDirectory(templatesDir, {
-      ...template,
-      backendVersion: backendName,
-      updatedAt: now
-    })
-  }
-
-  return listTemplatesFromDirectory(templatesDir)
-}
-
 function buildBackendUpdateResult(activeBackendName: string): BackendUpdateResult {
   return {
     snapshot: buildFilesystemSnapshot(),
-    templates: migrateTemplatesToBackend(activeBackendName),
+    templates: listTemplatesFromDirectory(getAppPaths().templates),
     activeBackendName
   }
 }
@@ -1240,10 +1260,12 @@ function listBackendsFromDirectory(backendDir: string): BackendEntry[] {
       const basePath = join(backendDir, entry.name)
       const commandsPath = join(basePath, 'commands.json')
       const exe = findBackendExecutable(basePath)
+      const flavor = getBackendFlavor(entry.name)
 
       return {
         name: entry.name,
         displayName: getBackendDisplayName(basePath, entry.name),
+        flavor,
         path: basePath,
         hasCommands: existsSync(commandsPath),
         exe
@@ -2139,7 +2161,7 @@ export function registerIpcHandlers(): void {
       }
     } catch (err) { return { error: String(err) } }
   })
-  ipcMain.handle('update-backend-source', async (event, requestedTagName?: string) => {
+  ipcMain.handle('update-backend-source', async (event, requestedTagName?: string, requestedFlavor?: BackendBuildFlavor) => {
     if (runningProcesses.size > 0) {
       return { success: false, error: 'Stop running model processes before updating the backend.' }
     }
@@ -2157,7 +2179,8 @@ export function registerIpcHandlers(): void {
     }
 
     const scriptPath = ensureSourceUpdateScript()
-    const cudaArch = getConfiguredCudaArch(repoDir)
+  const buildFlavor: BackendBuildFlavor = requestedFlavor === 'cpu' ? 'cpu' : 'cuda'
+  const cudaArch = buildFlavor === 'cuda' ? getConfiguredCudaArch(repoDir) : ''
     const buildType = process.env['HEXLLAMA_BUILD_TYPE']?.trim() || 'Release'
     let targetTagName = requestedTagName?.trim()
 
@@ -2173,12 +2196,14 @@ export function registerIpcHandlers(): void {
       return { success: false, error: 'Could not determine a valid upstream llama.cpp build tag.' }
     }
 
+    const buildName = getSourceBuildName(targetTagName, buildFlavor)
+
     event.sender.send('download-progress', { percent: 3, phase: 'starting' })
 
     return await new Promise<{ success: true; result: BackendUpdateResult } | { success: false; error: string; cancelled?: boolean }>((resolve) => {
       const child = spawn(
         'powershell.exe',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-RepoDir', repoDir, '-TargetRef', targetTagName, '-CudaArch', cudaArch, '-BuildType', buildType],
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-RepoDir', repoDir, '-TargetRef', targetTagName, '-BuildFlavor', buildFlavor, '-CudaArch', cudaArch, '-BuildType', buildType],
         { windowsHide: true }
       )
 
@@ -2186,7 +2211,6 @@ export function registerIpcHandlers(): void {
       sourceUpdateJob = job
       let stdoutBuffer = ''
       let stderrBuffer = ''
-      let buildName = ''
 
       const handleLine = (line: string) => {
         if (!line.trim()) return
@@ -2198,8 +2222,6 @@ export function registerIpcHandlers(): void {
         }
 
         if (line.startsWith('HEXLLAMA_RESULT|')) {
-          const [, reportedBuildName] = line.split('|')
-          buildName = reportedBuildName
           return
         }
 
@@ -2222,7 +2244,7 @@ export function registerIpcHandlers(): void {
           sourceUpdateJob = null
         }
 
-        removeFailedSourceBuild(repoDir, targetTagName)
+        removeFailedSourceBuild(repoDir, buildName)
         event.sender.send('download-progress', null)
         resolve({ success: false, error: String(error) })
       })
@@ -2234,14 +2256,14 @@ export function registerIpcHandlers(): void {
         }
 
         if (job.cancelled) {
-          removeFailedSourceBuild(repoDir, targetTagName)
+          removeFailedSourceBuild(repoDir, buildName)
           event.sender.send('download-progress', null)
           resolve({ success: false, error: 'cancelled', cancelled: true })
           return
         }
 
         if (code !== 0) {
-          removeFailedSourceBuild(repoDir, targetTagName)
+          removeFailedSourceBuild(repoDir, buildName)
           event.sender.send('download-progress', null)
           resolve({ success: false, error: stderrBuffer.trim() || 'Source update failed.' })
           return

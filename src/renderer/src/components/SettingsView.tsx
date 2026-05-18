@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderOpen, Moon, Sun, Monitor } from 'lucide-react'
 import CommandsEditor from './CommandsEditor'
-import type { AppWindowBehaviorSettings, BackendVersion, Template } from '../../../shared/types'
+import type { AppWindowBehaviorSettings, BackendBuildFlavor, BackendVersion, Template } from '../../../shared/types'
 import type { ModelFileInfo, ThemeMode } from '../store/useStore'
 
 const NOTIF_KEY = 'hexllama_update_notify'
@@ -19,6 +19,11 @@ interface BackendSourceUpdateResult {
   snapshot: FilesystemSnapshot
   templates: Template[]
   activeBackendName: string
+}
+
+function hasInstalledBuild(backends: BackendVersion[], tagName: string, flavor: BackendBuildFlavor): boolean {
+  const expectedBackendName = flavor === 'cpu' ? `${tagName}-cpu` : tagName
+  return backends.some((backend) => backend.name === expectedBackendName)
 }
 
 function formatUpdateProgress(progress: { percent: number; phase: string } | null): string {
@@ -58,6 +63,11 @@ export default function SettingsView() {
   const [changingFolder, setChangingFolder] = useState<FolderKind | null>(null)
   const [windowBehaviorSettings, setWindowBehaviorSettings] = useState<AppWindowBehaviorSettings>({ minimizeToTray: false })
   const [loadingWindowBehaviorSettings, setLoadingWindowBehaviorSettings] = useState(true)
+  const latestTagName = releaseInfo?.tagName?.trim() || ''
+  const hasCpuBuild = latestTagName ? hasInstalledBuild(backends, latestTagName, 'cpu') : false
+  const hasCudaBuild = latestTagName ? hasInstalledBuild(backends, latestTagName, 'cuda') : false
+  const canBuildCpu = Boolean(latestTagName) && !hasCpuBuild
+  const canBuildCuda = Boolean(latestTagName) && !hasCudaBuild
 
   useEffect(() => {
     void window.api.getAppWindowBehaviorSettings().then((settings) => {
@@ -109,13 +119,20 @@ export default function SettingsView() {
   }
 
   async function applyBackendUpdateResult(result: BackendSourceUpdateResult) {
+    const currentActiveBackend = useStore.getState().activeBackend
+
     setPaths(result.snapshot.paths)
     setModels(result.snapshot.models)
     setBackends(result.snapshot.backends)
     setCards(result.templates.map((template) => ({ template, status: 'idle', expanded: false })))
 
-    const nextActiveBackend = result.snapshot.backends.find((backend) => backend.name === result.activeBackendName) ?? result.snapshot.backends[0] ?? null
-    setActiveBackend(nextActiveBackend)
+    const nextActiveBackend = currentActiveBackend
+      ? result.snapshot.backends.find((backend) => backend.name === currentActiveBackend.name) ?? currentActiveBackend
+      : result.snapshot.backends.find((backend) => backend.name === result.activeBackendName) ?? result.snapshot.backends[0] ?? null
+
+    if (nextActiveBackend) {
+      setActiveBackend(nextActiveBackend)
+    }
 
     const commands = nextActiveBackend
       ? await window.api.getCommands(nextActiveBackend.name)
@@ -175,12 +192,12 @@ export default function SettingsView() {
     }
   }
 
-  const handleSourceUpdate = async () => {
+  const handleSourceUpdate = async (flavor: BackendBuildFlavor) => {
     if (!releaseInfo?.tagName) return
 
     setUpdatingSource(true)
     try {
-      const res = await window.api.updateBackendSource(releaseInfo.tagName)
+      const res = await window.api.updateBackendSource(releaseInfo.tagName, flavor)
       if (res.success) {
         await applyBackendUpdateResult(res.result)
       } else if (res.cancelled) {
@@ -372,6 +389,7 @@ export default function SettingsView() {
                   <div>
                     <div className="settings-row-label flex items-center gap-2">
                       {b.displayName}
+                      <span className="version-badge">{b.flavor.toUpperCase()}</span>
                       {activeBackend?.name === b.name && <span className="version-badge active-version">Active</span>}
                       {!b.hasCommands && <span className="version-badge">Fallback Schema</span>}
                     </div>
@@ -432,25 +450,27 @@ export default function SettingsView() {
                   {releaseInfo.isNewer === false && <span style={{ marginLeft: 8, color: 'var(--success)' }}>✓ Up to date</span>}
                 </div>
               </div>
-              {releaseInfo.isNewer !== false && (
-                <div className="flex items-center gap-2 w-full">
-                  {updatingSource || downloadProgress ? (
-                    <div className="text-sm flex items-center gap-3" style={{ color: 'var(--text-muted)' }}>
-                      <Loader2 size={14} className="spin" />
-                      {formatUpdateProgress(downloadProgress)}
-                      <button 
-                        className="btn btn-ghost btn-sm text-danger" 
-                        onClick={() => { void window.api.cancelBackendDownload() }}
-                        style={{ padding: '0 8px' }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <button className="btn btn-primary btn-sm" onClick={handleSourceUpdate}>Build From Source</button>
-                  )}
-                </div>
-              )}
+              <div className="flex items-center gap-2 w-full">
+                {updatingSource || downloadProgress ? (
+                  <div className="text-sm flex items-center gap-3" style={{ color: 'var(--text-muted)' }}>
+                    <Loader2 size={14} className="spin" />
+                    {formatUpdateProgress(downloadProgress)}
+                    <button 
+                      className="btn btn-ghost btn-sm text-danger" 
+                      onClick={() => { void window.api.cancelBackendDownload() }}
+                      style={{ padding: '0 8px' }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : canBuildCpu || canBuildCuda ? (
+                  <>
+                    {canBuildCpu && <button className="btn btn-secondary btn-sm" onClick={() => void handleSourceUpdate('cpu')}>Build CPU Only</button>}
+                    {canBuildCuda && <button className="btn btn-primary btn-sm" onClick={() => void handleSourceUpdate('cuda')}>Build CUDA</button>}
+                  </>
+                ) : null
+                }
+              </div>
             </div>
           )
         ) : (

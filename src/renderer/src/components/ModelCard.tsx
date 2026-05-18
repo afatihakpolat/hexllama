@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
+import { getBooleanCommandFlag } from '../utils/commandArgs'
 import { Play, Square, Settings, ChevronDown, MoreVertical, Copy, Trash, Download, Globe, Server } from 'lucide-react'
 import type { CardState, CommandParam } from '../../../shared/types'
 import CmdParamsEditor from './CmdParamsEditor'
@@ -96,7 +97,10 @@ export default function ModelCard({ card }: Props) {
           knownArgs.add(cmd.arg)
           const val = tArgs[cmd.arg]
           if (val !== undefined && val !== null && val !== '') {
-            if (cmd.type === 'boolean') { if (val === true) args.push(cmd.arg) }
+            if (cmd.type === 'boolean') {
+              const booleanFlag = getBooleanCommandFlag(cmd, val)
+              if (booleanFlag) args.push(booleanFlag)
+            }
             else args.push(cmd.arg, String(val))
           }
         }

@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, LiteLlmInstallStatus, LiteLlmManagerSettingsInput, LiteLlmManagerSnapshot, LiteLlmModelEntry, ReleaseInfo, AppWindowBehaviorSettings, ModelExitEvent, ModelOutputEvent, UsageCostSettings, UsageStatsQuery, UsageStatsSnapshot, UsageUpdatedEvent } from '../../shared/types'
+import type { Template, BackendVersion, BackendBuildFlavor, CommandsSchema, LiteLlmInstallStatus, LiteLlmManagerSettingsInput, LiteLlmManagerSnapshot, LiteLlmModelEntry, ReleaseInfo, AppWindowBehaviorSettings, ModelExitEvent, ModelOutputEvent, UsageCostSettings, UsageStatsQuery, UsageStatsSnapshot, UsageUpdatedEvent } from '../../shared/types'
 interface ModelFileInfo {
   name: string
   path: string
@@ -80,7 +80,7 @@ interface LlamaCppApi {
   onUsageUpdated: (cb: (data: UsageUpdatedEvent) => void) => () => void
   removeUsageUpdatedListener: () => void
   checkUpdates: () => Promise<ReleaseInfo>
-  updateBackendSource: (tagName?: string) => Promise<{ success: true; result: BackendSourceUpdateResult } | { success: false; error?: string; cancelled?: boolean }>
+  updateBackendSource: (tagName?: string, flavor?: BackendBuildFlavor) => Promise<{ success: true; result: BackendSourceUpdateResult } | { success: false; error?: string; cancelled?: boolean }>
   downloadRelease: (opts: { url: string; version: string; assetName: string }) => Promise<{ success: boolean; path?: string; error?: string }>
   cancelBackendDownload: () => Promise<{ success: boolean }>
   onDownloadProgress: (callback: (data: { percent: number; phase: string }) => void) => void

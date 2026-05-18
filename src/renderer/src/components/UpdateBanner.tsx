@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useStore } from '../store/useStore'
 import { X, Download, Loader2 } from 'lucide-react'
-import type { Template } from '../../../shared/types'
+import type { BackendBuildFlavor, BackendVersion, Template } from '../../../shared/types'
 
 interface BackendSourceUpdateResult {
   snapshot: {
@@ -11,6 +11,11 @@ interface BackendSourceUpdateResult {
   }
   templates: Template[]
   activeBackendName: string
+}
+
+function hasInstalledBuild(backends: BackendVersion[], tagName: string, flavor: BackendBuildFlavor): boolean {
+  const expectedBackendName = flavor === 'cpu' ? `${tagName}-cpu` : tagName
+  return backends.some((backend) => backend.name === expectedBackendName)
 }
 
 function formatUpdateProgress(progress: { percent: number; phase: string } | null): string {
@@ -36,21 +41,31 @@ function formatUpdateProgress(progress: { percent: number; phase: string } | nul
 export default function UpdateBanner() {
   const {
     releaseInfo, updateDismissed, setUpdateDismissed,
-    downloadProgress, setDownloadProgress, setBackends,
+    downloadProgress, setDownloadProgress, setBackends, backends,
     setActiveBackend, setCommandsSchema, setCards, setModels, setPaths, setReleaseInfo
   } = useStore()
   const [updatingSource, setUpdatingSource] = useState(false)
   const notifPref = localStorage.getItem('hexllama_update_notify') || 'banner'
-  if (!releaseInfo || releaseInfo.error || updateDismissed || releaseInfo.isNewer === false || notifPref === 'manual') return null
+  const latestTagName = releaseInfo?.tagName?.trim() || ''
+  const canBuildCpu = Boolean(latestTagName) && !hasInstalledBuild(backends, latestTagName, 'cpu')
+  const canBuildCuda = Boolean(latestTagName) && !hasInstalledBuild(backends, latestTagName, 'cuda')
+  if (!releaseInfo || releaseInfo.error || updateDismissed || releaseInfo.isNewer === false || notifPref === 'manual' || (!canBuildCpu && !canBuildCuda)) return null
 
   async function applyBackendUpdateResult(result: BackendSourceUpdateResult) {
+    const currentActiveBackend = useStore.getState().activeBackend
+
     setPaths(result.snapshot.paths)
     setModels(result.snapshot.models)
     setBackends(result.snapshot.backends)
     setCards(result.templates.map((template) => ({ template, status: 'idle', expanded: false })))
 
-    const nextActiveBackend = result.snapshot.backends.find((backend) => backend.name === result.activeBackendName) ?? result.snapshot.backends[0] ?? null
-    setActiveBackend(nextActiveBackend)
+    const nextActiveBackend = currentActiveBackend
+      ? result.snapshot.backends.find((backend) => backend.name === currentActiveBackend.name) ?? currentActiveBackend
+      : result.snapshot.backends.find((backend) => backend.name === result.activeBackendName) ?? result.snapshot.backends[0] ?? null
+
+    if (nextActiveBackend) {
+      setActiveBackend(nextActiveBackend)
+    }
 
     const commands = nextActiveBackend
       ? await window.api.getCommands(nextActiveBackend.name)
@@ -60,12 +75,12 @@ export default function UpdateBanner() {
     setReleaseInfo(await window.api.checkUpdates())
   }
 
-  const handleSourceUpdate = async () => {
+  const handleSourceUpdate = async (flavor: BackendBuildFlavor) => {
     if (!releaseInfo?.tagName) return
 
     setUpdatingSource(true)
     try {
-      const res = await window.api.updateBackendSource(releaseInfo.tagName)
+      const res = await window.api.updateBackendSource(releaseInfo.tagName, flavor)
       if (res.success) {
         await applyBackendUpdateResult(res.result)
         setUpdateDismissed(true)
@@ -95,9 +110,19 @@ export default function UpdateBanner() {
             {formatUpdateProgress(downloadProgress)}
           </span>
         ) : (
-          <button onClick={handleSourceUpdate}>
-            Build From Source
-          </button>
+          <>
+            {canBuildCpu && (
+              <button onClick={() => void handleSourceUpdate('cpu')}>
+                Build CPU
+              </button>
+            )}
+            {canBuildCpu && canBuildCuda && ' or '}
+            {canBuildCuda && (
+              <button onClick={() => void handleSourceUpdate('cuda')}>
+                Build CUDA
+              </button>
+            )}
+          </>
         )}
       </span>
       {downloadProgress || updatingSource ? (
