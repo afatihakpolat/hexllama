@@ -18,10 +18,15 @@ function getInitialWindowBackground(): string {
 
 function resolveIcon(): string | undefined {
   const candidates = [
-    join(process.cwd(), 'assets', 'icon.png'),                  
-    join(__dirname, '../../assets/icon.png'),                    
-    join(app.getAppPath(), 'assets', 'icon.png')                 
+    join(process.cwd(), 'assets', 'icon.png'),
+    join(__dirname, '../../assets/icon.png'),
+    join(app.getAppPath(), 'assets', 'icon.png'),
+    join(process.resourcesPath, 'app.asar', 'assets', 'icon.png'),
+    join(process.resourcesPath, 'assets', 'icon.png'),
+    join(process.resourcesPath, 'app.asar', 'assets', 'icon_256.png'),
+    join(process.resourcesPath, 'assets', 'icon_256.png')
   ]
+
   return candidates.find(existsSync)
 }
 
@@ -54,6 +59,10 @@ function ensureTray(): Tray | null {
   if (!iconPath) return null
 
   const trayIcon = nativeImage.createFromPath(iconPath)
+  if (trayIcon.isEmpty()) {
+    return null
+  }
+
   tray = new Tray(trayIcon.resize({ width: 16, height: 16 }))
   tray.setToolTip('LlamaDeck')
   tray.setContextMenu(Menu.buildFromTemplate([

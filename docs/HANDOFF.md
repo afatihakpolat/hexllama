@@ -10,6 +10,7 @@
 - Fixed the first session-analysis pass so `Last 7 days` aligns to local-day buckets, grouped output honors the chosen sort mode, and session-tab timing/activity fields now reflect the selected window rather than the full session lifetime.
 - Added persisted app-wide usage cost settings plus a dedicated Cost tab inside Usage Stats, where the user can define input/cache/output rates and inspect derived cost analysis across overall totals, session rows, grouped sessions, templates, days, and recent requests.
 - Fixed the first Cost tab pass so cost analytics stay hidden until pricing settings successfully load or save, preventing misleading zero-cost totals, and unsaved pricing edits preview consistently across the displayed numbers.
+- Fixed token normalization across Recent Requests and persisted usage rollups so summary cards, session/template/day rollups, and request rows all use the same uncached-input/cache/output/total semantics even when llama.cpp mixes `usage` and `timings` shapes.
 - Planned a proxy-based llama.cpp usage-statistics feature in `docs/specs/llama-proxy-usage-stats/`, covering requirements, design, tasks, and initial implementation notes.
 - Replaced the old release-download update flow with an in-app Windows source-build flow for llama.cpp.
 - Added main-process orchestration that fetches the latest upstream `b####` tag, checks out that tag, configures CMake/CUDA tooling, builds into a versioned backend folder, and refreshes the renderer snapshot on success.
@@ -34,6 +35,7 @@
 - Rebranded the app from Hexllama to LlamaDeck across the packaged app name, visible UI, window titles, and README branding.
 - Added a main-process compatibility bootstrap so packaged upgrades keep using the legacy Hexllama user-data directory when it already exists, preserving templates, folder settings, LiteLLM settings, and renderer local storage through the rename.
 - Added a persisted minimize-to-tray window behavior setting with a Settings toggle; when enabled, clicking the main window X hides LlamaDeck to a tray icon with reopen and quit actions instead of closing the app.
+- Fixed packaged minimize-to-tray on Windows by shipping the tray icon asset with the app and extending main-process icon resolution to packaged resource paths before creating the tray.
 - Fixed packaged builds so imported and existing templates can still load the fallback advanced-parameter schema even when a backend-specific `commands.json` is absent; the app now resolves the bundled schema from the packaged app root and includes `resources/commands.json` in the installer payload.
 - Added a Live Output page that streams llama.cpp stdout and stderr over IPC into an in-memory renderer buffer; starting a model now focuses that page, nothing is persisted to disk, and process exit updates the card status out of running.
 
@@ -42,6 +44,7 @@
 - `npm run build` after fixing local-day window bucketing and session-finalization ordering in the new persistence model
 - `npm run build` after adding session-level rollups to the usage snapshot and a session-analysis tab with grouping/filter controls in the renderer
 - `npm run build` after adding persisted usage cost settings and the Cost analysis tab in Usage Stats
+- `npm run build` after canonicalizing usage token fields across request rows and persisted session rollups
 - `npm run build` after widening usage tracking to legacy non-v1 completion endpoints
 - `npm run build` after adding separate cache-token accounting to Usage Stats
 - `npm run build` after implementing proxy-backed usage stats, persistence, preload bridge, and Usage Stats page
@@ -58,17 +61,19 @@
 - `npm run build` after implementing persisted dark mode, cross-window theme sync, and dark-aware window bootstrap colors
 - `npm run build` after renaming the app to LlamaDeck and adding legacy user-data compatibility for packaged upgrades
 - `npm run build` after adding the persisted minimize-to-tray main-window behavior and Settings toggle
+- `npm run build` after packaging the tray icon asset and hardening packaged icon resolution for minimize-to-tray
 - `npm run build` and `npm run package` after fixing bundled commands-schema loading for packaged builds
 - `npm run build` after adding in-memory live model output streaming and the Live Output page
 
 ## Next Recommended Check
-- Manual smoke test for proxy-backed usage stats: start an API template, send both standard and streaming requests through `/v1/chat/completions`, `/completions`, or `/completion`, confirm the request rows appear live on Usage Stats, verify input/cache/output/total plus `pp`/`tg` are separated correctly, stop the session, restart the app, and confirm historical totals remain while Recent Requests resets.
+- Manual smoke test for proxy-backed usage stats: start an API template, send both standard and streaming requests through `/v1/chat/completions`, `/completions`, or `/completion`, confirm the request rows appear live on Usage Stats, verify input/cache/output/total stay internally consistent between the summary card and request rows, stop the session, restart the app, and confirm historical totals remain while Recent Requests resets.
 - Manual smoke test for usage cost analysis: set non-zero input/cache/output rates in the Cost tab, reload the app, confirm the same rates persist, and verify overall/session/template/day/request cost totals recalculate as expected when the configured rates change.
 - Add the smallest automated tests for `src/main/runtimePorts.ts`, `src/main/usageLedger.ts`, and the extraction path in `src/main/llamaProxy.ts`.
 - Manual smoke test in the running app: point the backend folder at a llama.cpp repo, run "Check Now", trigger "Build From Source", confirm a new `b####` folder appears without deleting older builds, confirm pinned templates move to the new backend, and confirm cancel stops without an error alert.
 - Manual smoke test for LiteLLM manager: open the LiteLLM page, confirm Python detection, install or update LiteLLM if needed, save the default config, set a local proxy API key if your config requires auth, start the proxy, test the local proxy, refresh remote models, and confirm a local template still starts against a local backend as before.
 - Manual smoke test for theming: switch between Light, Dark, and System in Settings, open a chat window, confirm the chat window follows the same theme, and if using System, toggle the OS theme while both windows stay open.
 - Manual smoke test for tray behavior: enable "Minimize To Tray" in Settings, click the main window X, confirm the app hides and shows a tray icon, restore it from the tray icon/menu, and confirm choosing Quit from the tray still shuts down managed processes.
+- Packaging note: `npm run package` rebuilt the zip/unpacked outputs successfully after the tray fix, but NSIS installer regeneration was blocked by a locked existing `dist/LlamaDeck Setup 1.0.0.exe` file during validation.
 - Manual smoke test for packaged schema fallback: install the generated Windows build, import one of the PowerShell-derived templates, expand its advanced parameters, and confirm the command editor loads instead of showing the missing-schema message.
 - Manual smoke test for live output: start a template, confirm the app switches to Live Output, verify stdout and stderr appear live without any file log being written, then stop the model and confirm the exit message appears and the card status returns from running.
 - Usage stats caveat: the page currently keeps its filter/query state locally instead of in Zustand, which keeps the implementation narrow but means there is no cross-view persistence of the selected stats filters yet.

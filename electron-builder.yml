@@ -6,6 +6,8 @@ files:
   - out/main/**/*
   - out/preload/**/*
   - out/renderer/**/*
+  - assets/icon.png
+  - assets/icon_256.png
   - resources/commands.json
 win:
   target:
