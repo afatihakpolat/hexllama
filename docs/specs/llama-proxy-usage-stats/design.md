@@ -7,11 +7,12 @@ Introduce a LlamaDeck-owned local HTTP proxy per running template. The proxy bin
 - Main process owns proxy-backed runtime launch, hidden upstream port allocation, request forwarding, usage extraction, live session state, and persisted history.
 - `src/main/ipc.ts` keeps IPC registration and top-level launch/stop orchestration, but the proxy and usage logic should live in focused helper modules instead of further inflating the IPC file.
 - Preload exposes typed usage snapshot methods and live-update subscriptions to the renderer.
-- Renderer keeps filter/load state local to the Usage Stats page; live recent-request buffering remains main-process-owned and historical rollups come from persisted session summaries.
+- Renderer keeps filter/load state local to the Usage Stats page; live recent-request buffering remains main-process-owned, historical rollups come from persisted session summaries, and cost math is derived client-side from those same token totals using app-wide persisted rate settings.
 - Live Output stays separate and continues to stream raw stdout/stderr from the upstream child process.
 
 ## Affected Modules
 - `src/main/ipc.ts`
+- `src/main/appSettings.ts` or a focused sibling settings helper
 - `src/main/userData.ts`
 - `src/main/llamaProxy.ts` or `src/main/runtimeProxy.ts`
 - `src/main/usageLedger.ts`
@@ -48,6 +49,9 @@ Introduce a LlamaDeck-owned local HTTP proxy per running template. The proxy bin
   - `liveSessions`
   - `recentRequests` (in-memory only, capped to the latest 20 requests in the current app run)
   - rollups by template and by day for the selected time window
+- `UsageCostSettings`
+  - `currency`, `inputCostPerMillion`, `cacheCostPerMillion`, `outputCostPerMillion`
+  - stored as app-wide settings and reused by the Usage Stats Cost tab
 
 ## Runtime Flow
 1. Renderer starts a template through the existing `run-model` path.
@@ -71,11 +75,13 @@ Introduce a LlamaDeck-owned local HTTP proxy per running template. The proxy bin
 - Keep `Recent Requests` in memory only, capped to the latest 20 requests for the current app run.
 - Migrate older append-only request-ledger history forward into session files once, then stop using the request log as the primary history source.
 - Preserve daily rollup fidelity inside each session file so `Today`, `7 Days`, and `All Time` can be computed without storing every request forever.
+- Store cost settings separately from usage sessions so pricing can be changed without rewriting historical session files.
 
 ## IPC and Renderer API
 - Add `get-usage-history(query?)` for initial page loads and filter changes.
 - Add `get-live-usage-sessions()` or fold live data into the history snapshot.
 - Add `on-usage-updated` for incremental live-session and recent-request refreshes.
+- Add `get-usage-cost-settings()` and `save-usage-cost-settings()` for app-wide pricing configuration.
 - Keep the existing `run-model` and `stop-model` renderer contract as stable as possible; the proxy behavior should be primarily a main-process implementation detail.
 
 ## UI
@@ -83,6 +89,7 @@ Introduce a LlamaDeck-owned local HTTP proxy per running template. The proxy bin
 - Show live sessions first: running template name, public port, requests, exact-token totals, last request, and current active-request count.
 - Show recent request history next: timestamp, template, endpoint, status, duration, exact-token totals, and whether the request was counted exactly.
 - Show historical rollups by template and by time window, with simple filters such as `Today`, `7 Days`, and `All Time`.
+- Add a `Cost` tab to Usage Stats with editable rate inputs and derived cost analysis for overall totals, per-session rows, grouped session analysis, templates, days, and recent requests.
 - Keep Live Output focused on raw stdout/stderr and optionally add a cross-link to Usage Stats when a model is running.
 - Update small copy surfaces so `serverPort` is described as the public API port rather than the direct llama-server bind.
 
@@ -103,6 +110,7 @@ Introduce a LlamaDeck-owned local HTTP proxy per running template. The proxy bin
 - Streaming response accounting is only exact when the upstream build emits usage data in a machine-readable terminal chunk.
 - A proxy hop adds implementation complexity and a small amount of latency, but it gives LlamaDeck reliable ownership of the public API surface.
 - Session-summary files are much smaller than a raw request log, but request-level history is intentionally ephemeral and limited to the current app run.
+- Derived cost analysis is only as accurate as the user-entered rates and intentionally reprices historical data when settings change in the first implementation.
 
 ## Alternatives Considered
 - Parsing stdout logs for usage: rejected because it is less reliable than server-returned API data and mixes transport telemetry with human-facing process output.

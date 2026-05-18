@@ -8,6 +8,8 @@
 - Added a dedicated Usage Stats page with live session cards, historical template/day rollups, and recent-request detail rows; exact token totals are shown only for responses that included llama.cpp `usage` or `timings`.
 - Added a dedicated Sessions tab inside Usage Stats that exposes per-session rollups for the selected window/template and supports local status filtering plus grouping by template or status for session-level analysis.
 - Fixed the first session-analysis pass so `Last 7 days` aligns to local-day buckets, grouped output honors the chosen sort mode, and session-tab timing/activity fields now reflect the selected window rather than the full session lifetime.
+- Added persisted app-wide usage cost settings plus a dedicated Cost tab inside Usage Stats, where the user can define input/cache/output rates and inspect derived cost analysis across overall totals, session rows, grouped sessions, templates, days, and recent requests.
+- Fixed the first Cost tab pass so cost analytics stay hidden until pricing settings successfully load or save, preventing misleading zero-cost totals, and unsaved pricing edits preview consistently across the displayed numbers.
 - Planned a proxy-based llama.cpp usage-statistics feature in `docs/specs/llama-proxy-usage-stats/`, covering requirements, design, tasks, and initial implementation notes.
 - Replaced the old release-download update flow with an in-app Windows source-build flow for llama.cpp.
 - Added main-process orchestration that fetches the latest upstream `b####` tag, checks out that tag, configures CMake/CUDA tooling, builds into a versioned backend folder, and refreshes the renderer snapshot on success.
@@ -39,6 +41,7 @@
 - `npm run build` after switching usage persistence from raw request ledger rows to compact per-session summaries with an in-memory recent-request buffer
 - `npm run build` after fixing local-day window bucketing and session-finalization ordering in the new persistence model
 - `npm run build` after adding session-level rollups to the usage snapshot and a session-analysis tab with grouping/filter controls in the renderer
+- `npm run build` after adding persisted usage cost settings and the Cost analysis tab in Usage Stats
 - `npm run build` after widening usage tracking to legacy non-v1 completion endpoints
 - `npm run build` after adding separate cache-token accounting to Usage Stats
 - `npm run build` after implementing proxy-backed usage stats, persistence, preload bridge, and Usage Stats page
@@ -60,6 +63,7 @@
 
 ## Next Recommended Check
 - Manual smoke test for proxy-backed usage stats: start an API template, send both standard and streaming requests through `/v1/chat/completions`, `/completions`, or `/completion`, confirm the request rows appear live on Usage Stats, verify input/cache/output/total plus `pp`/`tg` are separated correctly, stop the session, restart the app, and confirm historical totals remain while Recent Requests resets.
+- Manual smoke test for usage cost analysis: set non-zero input/cache/output rates in the Cost tab, reload the app, confirm the same rates persist, and verify overall/session/template/day/request cost totals recalculate as expected when the configured rates change.
 - Add the smallest automated tests for `src/main/runtimePorts.ts`, `src/main/usageLedger.ts`, and the extraction path in `src/main/llamaProxy.ts`.
 - Manual smoke test in the running app: point the backend folder at a llama.cpp repo, run "Check Now", trigger "Build From Source", confirm a new `b####` folder appears without deleting older builds, confirm pinned templates move to the new backend, and confirm cancel stops without an error alert.
 - Manual smoke test for LiteLLM manager: open the LiteLLM page, confirm Python detection, install or update LiteLLM if needed, save the default config, set a local proxy API key if your config requires auth, start the proxy, test the local proxy, refresh remote models, and confirm a local template still starts against a local backend as before.

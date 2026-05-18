@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Activity, BarChart3, RefreshCw } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type {
+  UsageCostSettings,
   UsageLiveSession,
   UsageRequestRecord,
   UsageSessionRollup,
@@ -24,14 +25,37 @@ const DEFAULT_QUERY: UsageStatsQuery = {
   limit: 100
 }
 
-type UsageStatsTab = 'overview' | 'sessions'
+const DEFAULT_USAGE_COST_SETTINGS: UsageCostSettings = {
+  currency: 'USD',
+  inputCostPerMillion: 0,
+  cacheCostPerMillion: 0,
+  outputCostPerMillion: 0
+}
+
+type UsageStatsTab = 'overview' | 'sessions' | 'cost'
 type UsageSessionGroupBy = 'none' | 'template' | 'status'
 type UsageSessionSortBy = 'activity' | 'tokens' | 'requests' | 'duration'
 type UsageSessionStatusFilter = 'all' | UsageSessionStatus
+type UsageCostSortBy = 'cost' | 'activity' | 'requests' | 'duration'
+
+interface UsageCostDraft {
+  currency: string
+  inputCostPerMillion: string
+  cacheCostPerMillion: string
+  outputCostPerMillion: string
+}
+
+interface UsageCostBreakdown {
+  inputCost: number
+  cacheCost: number
+  outputCost: number
+  totalCost: number
+}
 
 const STATS_TAB_OPTIONS: Array<{ label: string; value: UsageStatsTab }> = [
   { label: 'Overview', value: 'overview' },
-  { label: 'Sessions', value: 'sessions' }
+  { label: 'Sessions', value: 'sessions' },
+  { label: 'Cost', value: 'cost' }
 ]
 
 const SESSION_STATUS_OPTIONS: Array<{ label: string; value: UsageSessionStatusFilter }> = [
@@ -50,6 +74,13 @@ const SESSION_GROUP_OPTIONS: Array<{ label: string; value: UsageSessionGroupBy }
 const SESSION_SORT_OPTIONS: Array<{ label: string; value: UsageSessionSortBy }> = [
   { label: 'Latest activity', value: 'activity' },
   { label: 'Most tokens', value: 'tokens' },
+  { label: 'Most requests', value: 'requests' },
+  { label: 'Longest duration', value: 'duration' }
+]
+
+const COST_SORT_OPTIONS: Array<{ label: string; value: UsageCostSortBy }> = [
+  { label: 'Highest cost', value: 'cost' },
+  { label: 'Latest activity', value: 'activity' },
   { label: 'Most requests', value: 'requests' },
   { label: 'Longest duration', value: 'duration' }
 ]
@@ -92,8 +123,81 @@ function formatTimestamp(timestamp?: string): string {
     : date.toLocaleString([], { hour12: false })
 }
 
-function getUncachedInputTokens(record: Pick<UsageRequestRecord, 'promptTokens' | 'cacheTokens'>): number {
+function formatCost(value: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: currency.trim().toUpperCase() || 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 6
+    }).format(value)
+  } catch {
+    const normalizedCurrency = currency.trim().toUpperCase() || 'USD'
+    return `${normalizedCurrency} ${value.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')}`
+  }
+}
+
+function formatRatePerMillion(value: number, currency: string): string {
+  return `${formatCost(value, currency)} / 1M`
+}
+
+function getUncachedInputTokens(record: Pick<UsageSummaryRollup, 'promptTokens' | 'cacheTokens'>): number {
   return Math.max(record.promptTokens - record.cacheTokens, 0)
+}
+
+function createUsageCostDraft(settings: UsageCostSettings): UsageCostDraft {
+  return {
+    currency: settings.currency,
+    inputCostPerMillion: String(settings.inputCostPerMillion),
+    cacheCostPerMillion: String(settings.cacheCostPerMillion),
+    outputCostPerMillion: String(settings.outputCostPerMillion)
+  }
+}
+
+function parseNonNegativeRate(rawValue: string, label: string): number {
+  const trimmedValue = rawValue.trim()
+  if (!trimmedValue) {
+    return 0
+  }
+
+  const parsedValue = Number(trimmedValue)
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+    throw new Error(`${label} must be a non-negative number.`)
+  }
+
+  return parsedValue
+}
+
+function parseUsageCostDraft(draft: UsageCostDraft): UsageCostSettings {
+  const normalizedCurrency = draft.currency.trim().toUpperCase() || DEFAULT_USAGE_COST_SETTINGS.currency
+
+  return {
+    currency: normalizedCurrency,
+    inputCostPerMillion: parseNonNegativeRate(draft.inputCostPerMillion, 'Input cost'),
+    cacheCostPerMillion: parseNonNegativeRate(draft.cacheCostPerMillion, 'Cache cost'),
+    outputCostPerMillion: parseNonNegativeRate(draft.outputCostPerMillion, 'Output cost')
+  }
+}
+
+function tryParseUsageCostDraft(draft: UsageCostDraft): UsageCostSettings | null {
+  try {
+    return parseUsageCostDraft(draft)
+  } catch {
+    return null
+  }
+}
+
+function getUsageCostBreakdown(record: Pick<UsageSummaryRollup, 'promptTokens' | 'cacheTokens' | 'completionTokens'>, settings: UsageCostSettings): UsageCostBreakdown {
+  const inputCost = (getUncachedInputTokens(record) / 1_000_000) * settings.inputCostPerMillion
+  const cacheCost = (record.cacheTokens / 1_000_000) * settings.cacheCostPerMillion
+  const outputCost = (record.completionTokens / 1_000_000) * settings.outputCostPerMillion
+
+  return {
+    inputCost,
+    cacheCost,
+    outputCost,
+    totalCost: inputCost + cacheCost + outputCost
+  }
 }
 
 function renderTokenSummary(record: Pick<UsageRequestRecord, 'countedExactly' | 'promptTokens' | 'cacheTokens' | 'completionTokens' | 'totalTokens'>): string {
@@ -275,6 +379,31 @@ function sortSessionRollups(sessions: UsageSessionRollup[], sortBy: UsageSession
   })
 }
 
+function sortCostSessionRollups(sessions: UsageSessionRollup[], sortBy: UsageCostSortBy, settings: UsageCostSettings): UsageSessionRollup[] {
+  if (sortBy !== 'cost') {
+    return sortSessionRollups(sessions, sortBy)
+  }
+
+  return [...sessions].sort((left, right) => {
+    return getUsageCostBreakdown(right, settings).totalCost - getUsageCostBreakdown(left, settings).totalCost
+      || right.requestCount - left.requestCount
+      || getTimestampValue(getSessionActivityTimestamp(right)) - getTimestampValue(getSessionActivityTimestamp(left))
+  })
+}
+
+function sortCostSessionGroups(groups: SessionAnalysisGroup[], sortBy: UsageCostSortBy, settings: UsageCostSettings): SessionAnalysisGroup[] {
+  if (sortBy !== 'cost') {
+    return groups
+  }
+
+  return [...groups].sort((left, right) => {
+    return getUsageCostBreakdown(right, settings).totalCost - getUsageCostBreakdown(left, settings).totalCost
+      || right.requestCount - left.requestCount
+      || getTimestampValue(right.lastActivityAt) - getTimestampValue(left.lastActivityAt)
+      || left.label.localeCompare(right.label)
+  })
+}
+
 export default function UsageStatsView() {
   const cards = useStore((state) => state.cards)
   const [query, setQuery] = useState<UsageStatsQuery>(DEFAULT_QUERY)
@@ -282,6 +411,15 @@ export default function UsageStatsView() {
   const [sessionStatusFilter, setSessionStatusFilter] = useState<UsageSessionStatusFilter>('all')
   const [sessionGroupBy, setSessionGroupBy] = useState<UsageSessionGroupBy>('none')
   const [sessionSortBy, setSessionSortBy] = useState<UsageSessionSortBy>('activity')
+  const [costSessionStatusFilter, setCostSessionStatusFilter] = useState<UsageSessionStatusFilter>('all')
+  const [costSessionGroupBy, setCostSessionGroupBy] = useState<UsageSessionGroupBy>('none')
+  const [costSessionSortBy, setCostSessionSortBy] = useState<UsageCostSortBy>('cost')
+  const [costSettings, setCostSettings] = useState<UsageCostSettings>(DEFAULT_USAGE_COST_SETTINGS)
+  const [costDraft, setCostDraft] = useState<UsageCostDraft>(createUsageCostDraft(DEFAULT_USAGE_COST_SETTINGS))
+  const [loadingCostSettings, setLoadingCostSettings] = useState(true)
+  const [savingCostSettings, setSavingCostSettings] = useState(false)
+  const [costSettingsReady, setCostSettingsReady] = useState(false)
+  const [costSettingsError, setCostSettingsError] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState<UsageStatsSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -315,6 +453,40 @@ export default function UsageStatsView() {
     sessionSortBy
   )
   const sessionAnalysisGroups = buildSortedSessionAnalysisGroups(filteredSessionRollups, sessionGroupBy, sessionSortBy)
+  const filteredCostSessionRollups = sortCostSessionRollups(
+    (snapshot?.sessionRollups ?? []).filter((session) => {
+      return costSessionStatusFilter === 'all' || session.status === costSessionStatusFilter
+    }),
+    costSessionSortBy,
+    tryParseUsageCostDraft(costDraft) ?? costSettings
+  )
+  const costSessionAnalysisGroups = sortCostSessionGroups(
+    buildSortedSessionAnalysisGroups(
+      filteredCostSessionRollups,
+      costSessionGroupBy,
+      costSessionSortBy === 'cost' ? 'tokens' : costSessionSortBy
+    ),
+    costSessionSortBy,
+    tryParseUsageCostDraft(costDraft) ?? costSettings
+  )
+  const effectiveCostSettings = tryParseUsageCostDraft(costDraft) ?? costSettings
+  const canRenderCostAnalysis = costSettingsReady && !loadingCostSettings
+  const summaryCost = snapshot && canRenderCostAnalysis ? getUsageCostBreakdown(snapshot.summary, effectiveCostSettings) : null
+
+  async function loadCostSettings() {
+    try {
+      const nextSettings = await window.api.getUsageCostSettings()
+      setCostSettings(nextSettings)
+      setCostDraft(createUsageCostDraft(nextSettings))
+      setCostSettingsReady(true)
+      setCostSettingsError(null)
+    } catch (loadError) {
+      setCostSettingsReady(false)
+      setCostSettingsError(loadError instanceof Error ? loadError.message : String(loadError))
+    } finally {
+      setLoadingCostSettings(false)
+    }
+  }
 
   async function loadSnapshot(nextQuery: UsageStatsQuery, mode: 'initial' | 'refresh' = 'refresh') {
     if (mode === 'initial') {
@@ -340,12 +512,37 @@ export default function UsageStatsView() {
   }, [query.window, query.templateId])
 
   useEffect(() => {
+    void loadCostSettings()
+  }, [])
+
+  useEffect(() => {
     const unsubscribe = window.api.onUsageUpdated(() => {
       void loadSnapshot(queryRef.current)
     })
 
     return unsubscribe
   }, [])
+
+  async function handleSaveCostSettings() {
+    try {
+      setSavingCostSettings(true)
+      const parsedSettings = parseUsageCostDraft(costDraft)
+      const result = await window.api.saveUsageCostSettings(parsedSettings)
+      if (!result.success) {
+        alert(`Failed to save cost settings: ${result.error || 'Unknown error'}`)
+        return
+      }
+
+      setCostSettings(result.settings)
+      setCostDraft(createUsageCostDraft(result.settings))
+      setCostSettingsReady(true)
+      setCostSettingsError(null)
+    } catch (saveError) {
+      alert(saveError instanceof Error ? saveError.message : String(saveError))
+    } finally {
+      setSavingCostSettings(false)
+    }
+  }
 
   return (
     <div className="usage-stats-page">
@@ -590,7 +787,7 @@ export default function UsageStatsView() {
                 )}
               </section>
             </>
-          ) : (
+          ) : activeTab === 'sessions' ? (
             <>
               <section className="usage-section">
                 <div className="usage-section-header usage-section-header-stack">
@@ -706,6 +903,353 @@ export default function UsageStatsView() {
                   </div>
                 )}
               </section>
+            </>
+          ) : (
+            <>
+              <section className="usage-section">
+                <div className="usage-section-header usage-section-header-stack">
+                  <div>
+                    <h2>Cost Settings</h2>
+                    <span className="usage-section-header-note">Set app-wide rates per 1M tokens. Changing these values reprices the current historical view immediately after save.</span>
+                  </div>
+                  <span>{loadingCostSettings ? 'Loading rates...' : 'App-wide pricing'}</span>
+                </div>
+                {costSettingsError && (
+                  <div className="usage-stats-warning">Cost settings failed to load: {costSettingsError}</div>
+                )}
+                <div className="usage-cost-config-grid">
+                  <label className="usage-control-field">
+                    <span>Currency</span>
+                    <input
+                      className="form-input usage-cost-input"
+                      value={costDraft.currency}
+                      onChange={(event) => setCostDraft((current) => ({ ...current, currency: event.target.value }))}
+                      placeholder="USD"
+                      maxLength={8}
+                      disabled={loadingCostSettings || savingCostSettings}
+                    />
+                  </label>
+                  <label className="usage-control-field">
+                    <span>Input / 1M</span>
+                    <input
+                      className="form-input usage-cost-input"
+                      type="number"
+                      min="0"
+                      step="0.000001"
+                      value={costDraft.inputCostPerMillion}
+                      onChange={(event) => setCostDraft((current) => ({ ...current, inputCostPerMillion: event.target.value }))}
+                      disabled={loadingCostSettings || savingCostSettings}
+                    />
+                  </label>
+                  <label className="usage-control-field">
+                    <span>Cache / 1M</span>
+                    <input
+                      className="form-input usage-cost-input"
+                      type="number"
+                      min="0"
+                      step="0.000001"
+                      value={costDraft.cacheCostPerMillion}
+                      onChange={(event) => setCostDraft((current) => ({ ...current, cacheCostPerMillion: event.target.value }))}
+                      disabled={loadingCostSettings || savingCostSettings}
+                    />
+                  </label>
+                  <label className="usage-control-field">
+                    <span>Output / 1M</span>
+                    <input
+                      className="form-input usage-cost-input"
+                      type="number"
+                      min="0"
+                      step="0.000001"
+                      value={costDraft.outputCostPerMillion}
+                      onChange={(event) => setCostDraft((current) => ({ ...current, outputCostPerMillion: event.target.value }))}
+                      disabled={loadingCostSettings || savingCostSettings}
+                    />
+                  </label>
+                </div>
+                <div className="usage-cost-config-actions">
+                  <button className="btn btn-primary" onClick={() => void handleSaveCostSettings()} disabled={loadingCostSettings || savingCostSettings}>
+                    {savingCostSettings ? 'Saving...' : 'Save Rates'}
+                  </button>
+                  <span className="usage-summary-meta">
+                    {formatRatePerMillion(effectiveCostSettings.inputCostPerMillion, effectiveCostSettings.currency)} input • {formatRatePerMillion(effectiveCostSettings.cacheCostPerMillion, effectiveCostSettings.currency)} cache • {formatRatePerMillion(effectiveCostSettings.outputCostPerMillion, effectiveCostSettings.currency)} output
+                  </span>
+                </div>
+              </section>
+
+              {!canRenderCostAnalysis ? (
+                <div className="usage-section-empty">Save or load cost settings to unlock detailed cost analysis for this usage history.</div>
+              ) : (
+                <>
+              <div className="usage-summary-grid">
+                <div className="usage-summary-card">
+                  <span className="usage-summary-label">Estimated Total Cost</span>
+                  <strong>{formatCost(summaryCost?.totalCost ?? 0, effectiveCostSettings.currency)}</strong>
+                  <span className="usage-summary-meta">For the selected window and template filter</span>
+                </div>
+                <div className="usage-summary-card">
+                  <span className="usage-summary-label">Input Cost</span>
+                  <strong>{formatCost(summaryCost?.inputCost ?? 0, effectiveCostSettings.currency)}</strong>
+                  <span className="usage-summary-meta">{formatNumber(getUncachedInputTokens(snapshot.summary))} uncached prompt tokens</span>
+                </div>
+                <div className="usage-summary-card">
+                  <span className="usage-summary-label">Cache Cost</span>
+                  <strong>{formatCost(summaryCost?.cacheCost ?? 0, effectiveCostSettings.currency)}</strong>
+                  <span className="usage-summary-meta">{formatNumber(snapshot.summary.cacheTokens)} cached prompt tokens</span>
+                </div>
+                <div className="usage-summary-card">
+                  <span className="usage-summary-label">Output Cost</span>
+                  <strong>{formatCost(summaryCost?.outputCost ?? 0, effectiveCostSettings.currency)}</strong>
+                  <span className="usage-summary-meta">{formatNumber(snapshot.summary.completionTokens)} generated tokens</span>
+                </div>
+              </div>
+
+              <section className="usage-section">
+                <div className="usage-section-header usage-section-header-stack">
+                  <div>
+                    <h2>Session Cost Analysis</h2>
+                    <span className="usage-section-header-note">Inspect estimated cost by persisted session, or group sessions by template or status.</span>
+                  </div>
+                  <span>{filteredCostSessionRollups.length} sessions match</span>
+                </div>
+                <div className="usage-session-controls">
+                  <label className="usage-control-field">
+                    <span>Status</span>
+                    <select
+                      className="form-select usage-analysis-select"
+                      value={costSessionStatusFilter}
+                      onChange={(event) => setCostSessionStatusFilter(event.target.value as UsageSessionStatusFilter)}
+                    >
+                      {SESSION_STATUS_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="usage-control-field">
+                    <span>Group</span>
+                    <select
+                      className="form-select usage-analysis-select"
+                      value={costSessionGroupBy}
+                      onChange={(event) => setCostSessionGroupBy(event.target.value as UsageSessionGroupBy)}
+                    >
+                      {SESSION_GROUP_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="usage-control-field">
+                    <span>Sort</span>
+                    <select
+                      className="form-select usage-analysis-select"
+                      value={costSessionSortBy}
+                      onChange={(event) => setCostSessionSortBy(event.target.value as UsageCostSortBy)}
+                    >
+                      {COST_SORT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {filteredCostSessionRollups.length === 0 ? (
+                  <div className="usage-section-empty">No persisted sessions match the current filters yet.</div>
+                ) : costSessionGroupBy === 'none' ? (
+                  <div className="usage-request-table-wrapper">
+                    <table className="usage-request-table usage-session-table">
+                      <thead>
+                        <tr>
+                          <th>Session</th>
+                          <th>Status</th>
+                          <th>Requests</th>
+                          <th>Estimated Cost</th>
+                          <th>Tokens</th>
+                          <th>Activity</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredCostSessionRollups.map((session) => {
+                          const sessionCost = getUsageCostBreakdown(session, effectiveCostSettings)
+
+                          return (
+                            <tr key={session.launchId}>
+                              <td>
+                                <div className="usage-request-primary">{session.templateName}</div>
+                                <div className="usage-request-secondary">{getSessionGroupSubtitle(session)}</div>
+                              </td>
+                              <td>
+                                <div className={`usage-status-pill usage-session-status ${session.status === 'running' ? 'ok' : session.status === 'error' ? 'error' : ''}`}>{formatSessionStatus(session.status)}</div>
+                                <div className="usage-request-secondary">{session.lastEndpoint || 'No endpoint snapshot'}</div>
+                              </td>
+                              <td>
+                                <div className="usage-request-primary">{formatNumber(session.requestCount)}</div>
+                                <div className="usage-request-secondary">{formatNumber(session.successCount)} ok • {formatNumber(session.errorCount)} failed</div>
+                              </td>
+                              <td>
+                                <div className="usage-request-primary">{formatCost(sessionCost.totalCost, effectiveCostSettings.currency)}</div>
+                                <div className="usage-request-secondary">{formatCost(sessionCost.inputCost, effectiveCostSettings.currency)} input • {formatCost(sessionCost.cacheCost, effectiveCostSettings.currency)} cache • {formatCost(sessionCost.outputCost, effectiveCostSettings.currency)} output</div>
+                              </td>
+                              <td>
+                                <div className="usage-request-primary">{formatNumber(session.totalTokens)}</div>
+                                <div className="usage-request-secondary">{formatNumber(getUncachedInputTokens(session))} input • {formatNumber(session.cacheTokens)} cache • {formatNumber(session.completionTokens)} output</div>
+                              </td>
+                              <td>
+                                <div className="usage-request-primary">{formatTimestamp(getSessionActivityTimestamp(session))}</div>
+                                <div className="usage-request-secondary">{session.windowEndedAt ? `Window end ${formatTimestamp(session.windowEndedAt)}` : 'Still running or open'}</div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="usage-list-table">
+                    {costSessionAnalysisGroups.map((group) => {
+                      const groupCost = getUsageCostBreakdown(group, effectiveCostSettings)
+
+                      return (
+                        <div className="usage-list-row" key={group.key}>
+                          <div>
+                            <div className="usage-list-title">{group.label}</div>
+                            <div className="usage-list-subtitle">{group.subtitle}</div>
+                          </div>
+                          <div className="usage-list-metrics">
+                            <span>{formatNumber(group.sessionCount)} sessions</span>
+                            <span>{formatNumber(group.requestCount)} requests</span>
+                            <span>{formatCost(groupCost.totalCost, effectiveCostSettings.currency)} total</span>
+                            <span>{formatCost(groupCost.inputCost, effectiveCostSettings.currency)} input • {formatCost(groupCost.cacheCost, effectiveCostSettings.currency)} cache • {formatCost(groupCost.outputCost, effectiveCostSettings.currency)} output</span>
+                            <span>{group.lastActivityAt ? `Last activity ${formatTimestamp(group.lastActivityAt)}` : 'No recent activity'}</span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+
+              <div className="usage-rollups-grid">
+                <section className="usage-section">
+                  <div className="usage-section-header">
+                    <h2>Template Costs</h2>
+                    <span>{snapshot.templateRollups.length} template rows</span>
+                  </div>
+                  {snapshot.templateRollups.length === 0 ? (
+                    <div className="usage-section-empty">No matching historical usage for the selected filter.</div>
+                  ) : (
+                    <div className="usage-list-table">
+                      {snapshot.templateRollups.map((rollup) => {
+                        const rollupCost = getUsageCostBreakdown(rollup, effectiveCostSettings)
+
+                        return (
+                          <div className="usage-list-row" key={rollup.templateId}>
+                            <div>
+                              <div className="usage-list-title">{rollup.templateName}</div>
+                              <div className="usage-list-subtitle">{rollup.modelPath?.split(/[/\\]/).pop() || 'No model path snapshot'}</div>
+                            </div>
+                            <div className="usage-list-metrics">
+                              <span>{formatNumber(rollup.requestCount)} requests</span>
+                              <span>{formatCost(rollupCost.totalCost, effectiveCostSettings.currency)} total</span>
+                              <span>{formatCost(rollupCost.inputCost, effectiveCostSettings.currency)} input • {formatCost(rollupCost.cacheCost, effectiveCostSettings.currency)} cache • {formatCost(rollupCost.outputCost, effectiveCostSettings.currency)} output</span>
+                              <span>{rollup.lastRequestAt ? formatTimestamp(rollup.lastRequestAt) : 'No recent activity'}</span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </section>
+
+                <section className="usage-section">
+                  <div className="usage-section-header">
+                    <h2>Daily Costs</h2>
+                    <span>{snapshot.dailyRollups.length} day rows</span>
+                  </div>
+                  {snapshot.dailyRollups.length === 0 ? (
+                    <div className="usage-section-empty">No persisted requests in this time window yet.</div>
+                  ) : (
+                    <div className="usage-list-table">
+                      {snapshot.dailyRollups.map((rollup) => {
+                        const rollupCost = getUsageCostBreakdown(rollup, effectiveCostSettings)
+
+                        return (
+                          <div className="usage-list-row" key={rollup.day}>
+                            <div>
+                              <div className="usage-list-title">{rollup.day}</div>
+                              <div className="usage-list-subtitle">{formatNumber(rollup.exactUsageCount)} exact rows</div>
+                            </div>
+                            <div className="usage-list-metrics">
+                              <span>{formatNumber(rollup.requestCount)} requests</span>
+                              <span>{formatCost(rollupCost.totalCost, effectiveCostSettings.currency)} total</span>
+                              <span>{formatCost(rollupCost.inputCost, effectiveCostSettings.currency)} input • {formatCost(rollupCost.cacheCost, effectiveCostSettings.currency)} cache • {formatCost(rollupCost.outputCost, effectiveCostSettings.currency)} output</span>
+                              <span>{formatNumber(rollup.errorCount)} failed</span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </section>
+              </div>
+
+              <section className="usage-section">
+                <div className="usage-section-header">
+                  <h2>Recent Request Costs</h2>
+                  <span>{snapshot.recentRequests.length} rows shown</span>
+                </div>
+                {snapshot.recentRequests.length === 0 ? (
+                  <div className="usage-section-empty">No tracked requests are buffered in this app run yet. This section is in-memory only and is capped to the last 20 requests.</div>
+                ) : (
+                  <div className="usage-request-table-wrapper">
+                    <table className="usage-request-table">
+                      <thead>
+                        <tr>
+                          <th>Time</th>
+                          <th>Template</th>
+                          <th>Endpoint</th>
+                          <th>Status</th>
+                          <th>Estimated Cost</th>
+                          <th>Tokens</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {snapshot.recentRequests.map((record) => {
+                          const requestCost = record.countedExactly ? getUsageCostBreakdown(record, effectiveCostSettings) : null
+
+                          return (
+                            <tr key={record.id}>
+                              <td>
+                                <div className="usage-request-primary">{formatTimestamp(record.finishedAt)}</div>
+                                <div className="usage-request-secondary">{record.stream ? 'stream' : 'json'}</div>
+                              </td>
+                              <td>
+                                <div className="usage-request-primary">{record.templateNameSnapshot}</div>
+                                <div className="usage-request-secondary">{record.modelPathSnapshot?.split(/[/\\]/).pop() || 'No model snapshot'}</div>
+                              </td>
+                              <td>
+                                <div className="usage-request-primary">{record.path}</div>
+                                <div className="usage-request-secondary">{record.method}</div>
+                              </td>
+                              <td>
+                                <div className={`usage-status-pill ${(record.statusCode ?? 500) < 400 ? 'ok' : 'error'}`}>{record.statusCode ?? 'ERR'}</div>
+                                <div className="usage-request-secondary">{record.error || (record.countedExactly ? 'exact usage' : 'non-exact row')}</div>
+                              </td>
+                              <td>
+                                <div className="usage-request-primary">{requestCost ? formatCost(requestCost.totalCost, effectiveCostSettings.currency) : 'Not exact'}</div>
+                                <div className="usage-request-secondary">{requestCost ? `${formatCost(requestCost.inputCost, effectiveCostSettings.currency)} input • ${formatCost(requestCost.cacheCost, effectiveCostSettings.currency)} cache • ${formatCost(requestCost.outputCost, effectiveCostSettings.currency)} output` : 'Cost requires exact token data'}</div>
+                              </td>
+                              <td>
+                                <div className="usage-request-primary">{renderTokenSummary(record)}</div>
+                                <div className="usage-request-secondary">input / cache / output / total</div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+                </>
+              )}
             </>
           )}
         </>

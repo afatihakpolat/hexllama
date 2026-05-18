@@ -8,5 +8,8 @@
 - DONE: Exposed usage snapshot methods and live update subscriptions through `src/preload/index.ts` and `src/renderer/src/env.d.ts`.
 - DONE: Added a dedicated renderer page in `src/renderer/src/components/UsageStatsView.tsx` and wired it through `src/renderer/src/App.tsx` and `src/renderer/src/components/Sidebar.tsx`.
 - DONE: Kept renderer usage query/load state local to `UsageStatsView.tsx` instead of extending Zustand, to avoid broad store churn for a page-scoped feature.
+- DONE: Added shared `UsageCostSettings` types plus main-process persistence for app-wide cost settings and exposed get/save IPC methods through preload and renderer typings.
+- DONE: Added a `Cost` tab inside `src/renderer/src/components/UsageStatsView.tsx` that lets the user define input/cache/output rates and derives cost analysis from the existing summary, session, template, day, and recent-request rollups.
+- IN_PROGRESS: Validate the pricing flow with `npm run build` and a manual smoke test that changes rates, reloads the app, and confirms persisted settings plus recalculated cost totals.
 - IN_PROGRESS: Add the smallest viable automated tests for port rewriting, response extraction, ledger aggregation, and proxy forwarding behavior, then complete a manual API smoke test in the running app.
 - DONE: Updated `docs/HANDOFF.md` and `docs/specs/llama-proxy-usage-stats/implementation-notes.md` with implementation findings, open issues, and the next recommended execution step.

@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, LiteLlmInstallStatus, LiteLlmManagerSettingsInput, LiteLlmManagerSnapshot, LiteLlmModelEntry, ReleaseInfo, AppWindowBehaviorSettings, ModelExitEvent, ModelOutputEvent, UsageStatsQuery, UsageStatsSnapshot, UsageUpdatedEvent } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, LiteLlmInstallStatus, LiteLlmManagerSettingsInput, LiteLlmManagerSnapshot, LiteLlmModelEntry, ReleaseInfo, AppWindowBehaviorSettings, ModelExitEvent, ModelOutputEvent, UsageCostSettings, UsageStatsQuery, UsageStatsSnapshot, UsageUpdatedEvent } from '../../shared/types'
 interface ModelFileInfo {
   name: string
   path: string
@@ -64,6 +64,7 @@ interface LlamaCppApi {
   listTemplates: () => Promise<Template[]>
   getTemplate: (id: string) => Promise<Template | null>
   getUsageStats: (query?: Partial<UsageStatsQuery>) => Promise<UsageStatsSnapshot>
+  getUsageCostSettings: () => Promise<UsageCostSettings>
   saveTemplate: (template: object) => Promise<{ success: boolean; id: string }>
   deleteTemplate: (id: string) => Promise<{ success: boolean }>
   importTemplate: () => Promise<Template | null>
@@ -98,6 +99,7 @@ interface LlamaCppApi {
   openChatWindow: (port: number) => Promise<void>
   getAppWindowBehaviorSettings: () => Promise<AppWindowBehaviorSettings>
   saveAppWindowBehaviorSettings: (settings: Partial<AppWindowBehaviorSettings>) => Promise<{ success: true; settings: AppWindowBehaviorSettings } | { success: false; error?: string }>
+  saveUsageCostSettings: (settings: Partial<UsageCostSettings>) => Promise<{ success: true; settings: UsageCostSettings } | { success: false; error?: string }>
 }
 declare global {
   interface Window { api: LlamaCppApi }

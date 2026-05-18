@@ -156,6 +156,12 @@ export interface UsageStatsSnapshot {
 export interface UsageUpdatedEvent {
   at: string
 }
+export interface UsageCostSettings {
+  currency: string
+  inputCostPerMillion: number
+  cacheCostPerMillion: number
+  outputCostPerMillion: number
+}
 export interface AppWindowBehaviorSettings {
   minimizeToTray: boolean
 }

@@ -14,6 +14,8 @@
 - Active session summaries are rewritten after each tracked request, and normal stop/quit paths finalize the session file with `stoppedAt`/status metadata.
 - Cache accounting is now stored separately as `cacheTokens` on request rows, rollups, and live sessions. `promptTokens` remains total input tokens, so cache should be interpreted as a subset of input rather than an additional independent total.
 - `get-usage-stats` now also returns per-session rollups for the selected window/template, including window-aware activity timestamps so the renderer can offer a dedicated session-analysis tab with local status filtering plus template/status grouping without mixing windowed totals with full-session timing.
+- Cost analysis is derived from existing token rollups at read/render time rather than persisted into session files. App-wide cost settings now store currency plus per-million rates for uncached input, cache, and output tokens.
+- The Cost tab owns rate editing directly and recalculates summary/session/template/day/request cost views from the current saved rates. A successful load/save is required before detailed cost analysis is shown so the UI does not present misleading zero-dollar totals.
 - Proxy shutdown now destroys open sockets before closing the public listener so stopping a model does not hang behind long-lived streaming requests.
 - Day-window rollups use local-day buckets consistently so `Today` and `7 Days` do not drift at timezone boundaries.
 - Remaining validation gap: there are still no automated tests for proxy extraction or ledger aggregation, and the new flow still needs a manual smoke test against a real llama.cpp server.

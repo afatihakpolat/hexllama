@@ -1053,6 +1053,21 @@ input, textarea, select {
   flex-wrap: wrap;
   gap: 12px;
 }
+.usage-cost-config-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.usage-cost-input {
+  width: 100%;
+}
+.usage-cost-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 .usage-control-field {
   display: flex;
   flex-direction: column;

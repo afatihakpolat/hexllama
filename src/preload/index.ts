@@ -30,6 +30,7 @@ const api = {
   listTemplates: () => ipcRenderer.invoke('list-templates'),
   getTemplate: (id: string) => ipcRenderer.invoke('get-template', id),
   getUsageStats: (query?: object) => ipcRenderer.invoke('get-usage-stats', query),
+  getUsageCostSettings: () => ipcRenderer.invoke('get-usage-cost-settings'),
   saveTemplate: (template: object) => ipcRenderer.invoke('save-template', template),
   deleteTemplate: (id: string) => ipcRenderer.invoke('delete-template', id),
   importTemplate: () => ipcRenderer.invoke('import-template'),
@@ -86,6 +87,7 @@ const api = {
   openChatWindow: (port: number) => ipcRenderer.invoke('open-chat-window', port),
   getAppWindowBehaviorSettings: () => ipcRenderer.invoke('get-app-window-behavior-settings'),
   saveAppWindowBehaviorSettings: (settings: object) => ipcRenderer.invoke('save-app-window-behavior-settings', settings),
+  saveUsageCostSettings: (settings: object) => ipcRenderer.invoke('save-usage-cost-settings', settings),
 }
 if (process.contextIsolated) {
   try {

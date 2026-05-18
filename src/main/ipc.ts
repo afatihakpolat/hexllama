@@ -11,7 +11,12 @@ import http from 'http'
 import { app } from 'electron'
 import extract from 'extract-zip'
 import { USER_DATA_ROOT } from './userData'
-import { getAppWindowBehaviorSettings, saveAppWindowBehaviorSettings } from './appSettings'
+import {
+  getAppWindowBehaviorSettings,
+  getUsageCostSettings,
+  saveAppWindowBehaviorSettings,
+  saveUsageCostSettings
+} from './appSettings'
 import { startLlamaProxy, type LlamaProxyHandle } from './llamaProxy'
 import { allocateLoopbackPort, getPublicBindHost, prepareUpstreamArgs } from './runtimePorts'
 import { normalizeUsageRecord } from './usageLedger'
@@ -37,6 +42,7 @@ import type {
   ModelOutputEvent,
   ModelOutputStream,
   Template,
+  UsageCostSettings,
   UsageLiveSession,
   UsageRequestRecord,
   UsageStatsQuery,
@@ -2080,9 +2086,20 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('get-app-window-behavior-settings', () => {
     return getAppWindowBehaviorSettings()
   })
+  ipcMain.handle('get-usage-cost-settings', () => {
+    return getUsageCostSettings()
+  })
   ipcMain.handle('save-app-window-behavior-settings', (_e, settings: Partial<AppWindowBehaviorSettings>) => {
     try {
       const savedSettings = saveAppWindowBehaviorSettings(settings)
+      return { success: true, settings: savedSettings }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
+  ipcMain.handle('save-usage-cost-settings', (_e, settings: Partial<UsageCostSettings>) => {
+    try {
+      const savedSettings = saveUsageCostSettings(settings)
       return { success: true, settings: savedSettings }
     } catch (error) {
       return { success: false, error: String(error) }
