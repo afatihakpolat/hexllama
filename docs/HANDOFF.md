@@ -47,6 +47,7 @@
 - Added explicit backend flavor metadata and UI labeling so CPU and CUDA builds no longer appear as duplicate `b####` entries; backend names now render as labels like `b#### · CPU` or `b#### · CUDA`, with a flavor badge in Settings.
 - Settings and the update banner now hide source-build buttons for build flavors that are already installed for the latest upstream tag; if both latest CPU and CUDA variants exist, the build actions disappear entirely.
 - Reverted the single-active-template restriction in the main-process launch path so different templates can run concurrently again; the app still prevents starting the exact same template twice.
+- Extended proxy usage tracking to include OpenAI-compatible `/v1/responses` requests, including streamed Responses payloads that report usage through nested `response` objects and `input_tokens`/`output_tokens` fields.
 
 ## Verification
 - `npm run build` after switching usage persistence from raw request ledger rows to compact per-session summaries with an in-memory recent-request buffer
@@ -79,9 +80,10 @@
 - `npm run build` after adding backend flavor labels so CPU and CUDA backends render distinctly across the UI
 - `npm run build` after hiding CPU/CUDA build buttons when the latest installed variants already exist
 - `npm run build` after removing the guard that stopped other running templates before launching a new one
+- `npm run build` after extending proxy usage extraction to cover `/v1/responses` and Responses API usage payload shapes
 
 ## Next Recommended Check
-- Manual smoke test for proxy-backed usage stats: start an API template, send both standard and streaming requests through `/v1/chat/completions`, `/completions`, or `/completion`, confirm the request rows appear live on Usage Stats, verify input/cache/output/total stay internally consistent between the summary card and request rows, stop the session, restart the app, and confirm historical totals remain while Recent Requests resets.
+- Manual smoke test for proxy-backed usage stats: start an API template, send both standard and streaming requests through `/v1/chat/completions`, `/v1/responses`, `/completions`, or `/completion`, confirm the request rows appear live on Usage Stats, verify input/cache/output/total stay internally consistent between the summary card and request rows, stop the session, restart the app, and confirm historical totals remain while Recent Requests resets.
 - Manual smoke test for usage cost analysis: set non-zero input/cache/output rates in the Cost tab, reload the app, confirm the same rates persist, and verify overall/session/template/day/request cost totals recalculate as expected when the configured rates change.
 - Add the smallest automated tests for `src/main/runtimePorts.ts`, `src/main/usageLedger.ts`, and the extraction path in `src/main/llamaProxy.ts`.
 - Manual smoke test in the running app: point the backend folder at a llama.cpp repo, run "Check Now", trigger "Build From Source", confirm a new `b####` folder appears without deleting older builds, confirm the active backend stays unchanged unless the user changes it, and confirm cancel stops without an error alert.

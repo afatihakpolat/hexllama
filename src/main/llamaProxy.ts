@@ -37,18 +37,22 @@ interface ExtractedUsage {
 const TRACKED_PATHS = new Set([
   '/completion',
   '/completions',
+  '/responses',
   '/chat/completions',
   '/v1/chat/completions',
   '/v1/completions',
+  '/v1/responses',
   '/v1/models'
 ])
 
 const EXACT_USAGE_PATHS = new Set([
   '/completion',
   '/completions',
+  '/responses',
   '/chat/completions',
   '/v1/chat/completions',
-  '/v1/completions'
+  '/v1/completions',
+  '/v1/responses'
 ])
 
 function shouldTrackRequest(pathname: string): boolean {
@@ -75,8 +79,15 @@ function normalizeTimings(timings: unknown): UsageTimingSnapshot | undefined {
   return Object.keys(normalized).length > 0 ? normalized : undefined
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object'
+    ? value as Record<string, unknown>
+    : null
+}
+
 function extractUsage(payload: unknown): ExtractedUsage {
-  if (!payload || typeof payload !== 'object') {
+  const record = asRecord(payload)
+  if (!record) {
     return {
       countedExactly: false,
       promptTokens: 0,
@@ -86,17 +97,28 @@ function extractUsage(payload: unknown): ExtractedUsage {
     }
   }
 
-  const record = payload as Record<string, unknown>
-  const usage = record.usage && typeof record.usage === 'object'
-    ? record.usage as Record<string, unknown>
-    : null
-  const timings = normalizeTimings(record.timings)
+  const sources = [record]
+  const nestedResponse = asRecord(record.response)
+  if (nestedResponse) {
+    sources.push(nestedResponse)
+  }
 
-  if (usage) {
-    const promptTokens = typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0
-    const promptTokenDetails = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object'
-      ? usage.prompt_tokens_details as Record<string, unknown>
-      : null
+  const timingsBySource = sources.map((source) => normalizeTimings(source.timings))
+  const fallbackTimings = timingsBySource.find((timings) => Boolean(timings))
+
+  for (const [index, source] of sources.entries()) {
+    const usage = asRecord(source.usage)
+    if (!usage) {
+      continue
+    }
+
+    const timings = timingsBySource[index] ?? fallbackTimings
+    const promptTokens = typeof usage.prompt_tokens === 'number'
+      ? usage.prompt_tokens
+      : typeof usage.input_tokens === 'number'
+        ? usage.input_tokens
+        : 0
+    const promptTokenDetails = asRecord(usage.prompt_tokens_details) ?? asRecord(usage.input_tokens_details)
     const usageCacheTokens = typeof promptTokenDetails?.cached_tokens === 'number'
       ? promptTokenDetails.cached_tokens
       : 0
@@ -104,8 +126,14 @@ function extractUsage(payload: unknown): ExtractedUsage {
       ? timings.cacheN
       : 0
     const cacheTokens = Math.max(usageCacheTokens, timingCacheTokens)
-    const completionTokens = typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0
-    const totalTokens = typeof usage.total_tokens === 'number' ? usage.total_tokens : promptTokens + completionTokens
+    const completionTokens = typeof usage.completion_tokens === 'number'
+      ? usage.completion_tokens
+      : typeof usage.output_tokens === 'number'
+        ? usage.output_tokens
+        : 0
+    const totalTokens = typeof usage.total_tokens === 'number'
+      ? usage.total_tokens
+      : promptTokens + completionTokens
 
     return {
       countedExactly: true,
@@ -117,18 +145,20 @@ function extractUsage(payload: unknown): ExtractedUsage {
     }
   }
 
-  if (timings && typeof timings.promptN === 'number' && typeof timings.predictedN === 'number') {
-    const promptTokens = timings.promptN
-    const cacheTokens = typeof timings.cacheN === 'number' ? timings.cacheN : 0
-    const completionTokens = timings.predictedN
+  for (const timings of timingsBySource) {
+    if (timings && typeof timings.promptN === 'number' && typeof timings.predictedN === 'number') {
+      const promptTokens = timings.promptN
+      const cacheTokens = typeof timings.cacheN === 'number' ? timings.cacheN : 0
+      const completionTokens = timings.predictedN
 
-    return {
-      countedExactly: true,
-      promptTokens,
-      cacheTokens,
-      completionTokens,
-      totalTokens: promptTokens + completionTokens,
-      timings
+      return {
+        countedExactly: true,
+        promptTokens,
+        cacheTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+        timings
+      }
     }
   }
 
@@ -193,6 +223,7 @@ function parseSseUsage(text: string): ExtractedUsage {
       if (extracted.countedExactly || extracted.timings) {
         usage.countedExactly = extracted.countedExactly
         usage.promptTokens = extracted.promptTokens
+        usage.cacheTokens = extracted.cacheTokens
         usage.completionTokens = extracted.completionTokens
         usage.totalTokens = extracted.totalTokens
         usage.timings = extracted.timings
