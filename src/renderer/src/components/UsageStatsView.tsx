@@ -378,7 +378,6 @@ export default function UsageStatsView() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [templates, setTemplates] = useState<Template[]>([])
   const queryRef = useRef(query)
 
   queryRef.current = query
@@ -403,11 +402,11 @@ export default function UsageStatsView() {
 
   const templatesById = useMemo(() => {
     const map = new Map<string, Template>()
-    for (const template of templates) {
-      map.set(template.id, template)
+    for (const card of cards) {
+      map.set(card.template.id, card.template)
     }
     return map
-  }, [templates])
+  }, [cards])
 
   const pricingForTemplate = (templateId: string | null | undefined) => {
     if (!templateId) return appSettings
@@ -444,8 +443,7 @@ export default function UsageStatsView() {
     costSessionSortBy,
     pricingForGroupKey
   )
-  const canRenderCostAnalysis = Boolean(snapshot)
-  const summaryCost = snapshot && canRenderCostAnalysis ? getUsageCostBreakdown(snapshot.summary, appSettings) : null
+  const summaryCost = snapshot ? getUsageCostBreakdown(snapshot.summary, appSettings) : null
 
   async function loadSnapshot(nextQuery: UsageStatsQuery, mode: 'initial' | 'refresh' = 'refresh') {
     if (mode === 'initial') {
@@ -476,22 +474,8 @@ export default function UsageStatsView() {
       .then((next) => {
         if (!cancelled) setAppSettings(next)
       })
-      .catch(() => {
-        // Keep defaults on load failure; Pricing tab will pick up the next successful load.
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    void window.api.listTemplates()
-      .then((next) => {
-        if (!cancelled) setTemplates(next)
-      })
-      .catch(() => {
-        if (!cancelled) setTemplates([])
+      .catch((loadError) => {
+        console.warn('Failed to load app-wide usage cost settings:', loadError)
       })
     return () => {
       cancelled = true
