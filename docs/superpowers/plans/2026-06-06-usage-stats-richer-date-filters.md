@@ -297,7 +297,7 @@ In `src/renderer/src/components/UsageStatsView.tsx`, add the new type and helper
 ```ts
 type UsageStatsWindow = 'today' | '7d' | '30d' | 'month' | 'all' | 'custom'
 
-const STORAGE_KEY = 'llamadeck_usage_stats_query_v1'
+const STORAGE_KEY = 'hexllama_usage_stats_query_v1'
 
 function presetToRange(preset: Exclude<UsageStatsWindow, 'custom'>): { fromTimestamp: number; toTimestamp: number } {
   const now = new Date()
