@@ -73,7 +73,7 @@ Pricing is stored in the same `templates/<id>.json` file as the rest of the temp
 
 ### Main process (`src/main/`)
 
-- **Template save/load** (existing path in `src/main/index.ts` or wherever templates are persisted): extend to round-trip the optional `pricing` block. Add a small `normalizeTemplatePricing(input: unknown): TemplatePricing | undefined` helper next to the existing field normalization. It strips `pricing` entirely if any of the three fields is not a finite non-negative number.
+- **Template save/load** (in `src/main/ipc.ts`, functions `normalizeTemplateRecord`, `listTemplatesFromDirectory`, `saveTemplateToDirectory`): extend `normalizeTemplateRecord` to round-trip the optional `pricing` block. Add a small `normalizeTemplatePricing(input: unknown): TemplatePricing | undefined` helper inside the same file. It strips `pricing` entirely if any of the three fields is not a finite non-negative number.
 - **`src/main/appSettings.ts`**: unchanged. App-wide rates stay where they are.
 - **`src/main/ipc.ts`**: no new handlers. The existing `get-templates` and `save-template` IPCs already return/accept the full template object, so `pricing` flows through them automatically.
 - No new main-process files are strictly required. The resolver lives in the renderer because cost is already derived at read time (the proxy-usage-stats spec explicitly accepted that cost may be derived from current token rollups rather than snapshotted historically).
@@ -105,8 +105,14 @@ Pricing is stored in the same `templates/<id>.json` file as the rest of the temp
 
 ### Read flow (Cost tab shows derived cost)
 
-1. Renderer loads templates (existing IPC) and app-wide rates (existing IPC) into the Zustand store on mount.
-2. Cost tab iterates over rollups, sessions, templates, days, and recent-request rows. For each row keyed by `templateId`, call `resolveTemplatePricing(template, appSettings)`.
+1. Renderer loads templates via the existing `window.api.listTemplates()` IPC and app-wide rates via `window.api.getUsageCostSettings()` on Pricing tab mount. Templates are also used by the Cost tab on every render.
+2. The Cost tab resolves rates per rollup row by inspecting which fields the rollup carries:
+   - `snapshot.summary` (overall): no `templateId`; uses the app-wide rates. Cross-template sum, so a single per-template rate is not applicable.
+   - `sessionRollups[]`: each row has `templateId`; resolves with that template's pricing (fallback to app-wide if absent/invalid).
+   - `templateRollups[]`: each row has `templateId`; resolves the same way.
+   - `dailyRollups[]`: no `templateId`; the row sums multiple templates, so the app-wide rates are used.
+   - `recentRequests[]`: each row carries a `templateId` from its session; resolves with that template's pricing.
+   - Cost-analysis session groups (by template or status): when grouped by template, resolve per group; otherwise use app-wide.
 3. Apply `(tokens / 1_000_000) * rate` per token class. Sum to total. Format with the shared currency.
 
 ### Recent requests
@@ -155,7 +161,7 @@ Pricing is stored in the same `templates/<id>.json` file as the rest of the temp
 ## Affected Files
 
 - `src/shared/types.ts` — extend `Template` with optional `pricing` field; add `TemplatePricing` type.
-- `src/main/index.ts` (or wherever templates are persisted) — round-trip and normalize the `pricing` field.
+- `src/main/ipc.ts` — round-trip and normalize the `pricing` field inside `normalizeTemplateRecord`; add `normalizeTemplatePricing` helper.
 - `src/renderer/src/utils/templatePricing.ts` (new) — resolver and types.
 - `src/renderer/src/utils/__tests__/templatePricing.test.ts` (new) — resolver tests.
 - `src/renderer/src/components/PricingTab.tsx` (new) — new management tab.
