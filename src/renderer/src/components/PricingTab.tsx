@@ -89,36 +89,24 @@ function formatRatePerMillion(value: number, currency: string): string {
   return `${formatCost(value, currency)} / 1M`
 }
 
-export function PricingTab(): JSX.Element {
+interface PricingTabProps {
+  appSettings: UsageCostSettings
+  onAppSettingsChange: (next: UsageCostSettings) => void
+}
+
+export function PricingTab({ appSettings, onAppSettingsChange }: PricingTabProps): JSX.Element {
   const cards = useStore((state) => state.cards)
   const updateCard = useStore((state) => state.updateCard)
 
-  const [appSettings, setAppSettings] = useState<UsageCostSettings>(DEFAULT_USAGE_COST_SETTINGS)
-  const [appDraft, setAppDraft] = useState<UsageCostDraft>(createUsageCostDraft(DEFAULT_USAGE_COST_SETTINGS))
-  const [appError, setAppError] = useState<string | null>(null)
+  const [appDraft, setAppDraft] = useState<UsageCostDraft>(createUsageCostDraft(appSettings))
   const [savingApp, setSavingApp] = useState(false)
   const [templateDrafts, setTemplateDrafts] = useState<Record<string, TemplatePricingDraft>>({})
   const [templateErrors, setTemplateErrors] = useState<Record<string, string | null>>({})
   const [savingTemplateId, setSavingTemplateId] = useState<string | null>(null)
 
   useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const next = await window.api.getUsageCostSettings()
-        if (cancelled) return
-        setAppSettings(next)
-        setAppDraft(createUsageCostDraft(next))
-        setAppError(null)
-      } catch (loadError) {
-        if (cancelled) return
-        setAppError(loadError instanceof Error ? loadError.message : String(loadError))
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    setAppDraft(createUsageCostDraft(appSettings))
+  }, [appSettings])
 
   useEffect(() => {
     setTemplateDrafts((current) => {
@@ -147,8 +135,7 @@ export function PricingTab(): JSX.Element {
         alert(`Failed to save app-wide pricing: ${result.error || 'Unknown error'}`)
         return
       }
-      setAppSettings(result.settings)
-      setAppDraft(createUsageCostDraft(result.settings))
+      onAppSettingsChange(result.settings)
     } catch (saveError) {
       alert(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
@@ -202,7 +189,6 @@ export function PricingTab(): JSX.Element {
           </div>
           <span>Default rates</span>
         </div>
-        {appError && <div className="usage-stats-warning">App-wide pricing failed to load: {appError}</div>}
         <div className="usage-cost-config-grid">
           <label className="usage-control-field">
             <span>Currency</span>
