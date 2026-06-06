@@ -70,7 +70,7 @@ The duplicated `getWindowStart` in `usageLedger.ts:113` and `usageSessions.ts:96
   - New constant `WINDOW_OPTIONS` with 5 entries: Today, Last 7 days, Last 30 days, This month, All time.
   - New helper `presetToRange(preset: UsageStatsWindow): { fromTimestamp, toTimestamp }` — computes the local-midnight-aligned range for the chosen preset. `month` is calendar-month-to-date (1st of local month at 00:00 → now).
   - Query state holds `{ fromTimestamp, toTimestamp, templateId, limit }` (no `window` field). The `selectedPreset` is derived: if a preset's computed range matches `query.from/to` exactly, that's the active preset; otherwise `'custom'`.
-  - Page header (Approach A — single row, custom disclosure on the right): 5 chips (existing layout) + a "Custom" disclosure button on the right of the chip group. Disclosure toggles a thin inline panel: two `<input type="date">` + Apply button. Apply sets `query.fromTimestamp` (interpreted as local-midnight start of the chosen day) and `query.toTimestamp` (end-of-day local on the chosen day). When `from > to`, Apply is disabled.
+  - Page header (Approach A — single row, custom disclosure on the right): 5 chips (existing layout) + a "Custom" disclosure button on the right of the chip group. Disclosure toggles a thin inline panel: two `<input type="date">` + Apply button. Apply sets `query.fromTimestamp` (interpreted as local-midnight start of the chosen day) and `query.toTimestamp` (end-of-day local on the chosen day). When `from > to`, Apply is disabled. The two date inputs pre-fill with the current `query.fromTimestamp` / `query.toTimestamp` converted to `YYYY-MM-DD` strings, so opening the panel always shows a sensible starting point; the inputs may be left blank in which case Apply is disabled.
   - Persistence: a small `useState` + `useEffect` pair on mount reads `localStorage.getItem('llamadeck_usage_stats_query_v1')` and hydrates the query; on every `setQuery`, the effect writes back. Schema is `{ fromTimestamp, toTimestamp, templateId, limit }`. Versioned key so we can change shape later. On parse failure, fall back to the existing default (last 7 days).
 - **No new Zustand state** — the store is unchanged. Filter state stays local to the component, just persisted.
 - **No new CSS classes** — the date inputs use existing `form-input`; the chip pattern is unchanged. The custom-range inline panel uses a small `usage-stats-custom-range` class with the existing variable styling (`--surface`, `--border`, `--accent`).
@@ -111,3 +111,18 @@ The duplicated `getWindowStart` in `usageLedger.ts:113` and `usageSessions.ts:96
 - Persisting other Usage Stats filters (group-by, sort-by, status). They stay local; persistence of the date filter is the only one in scope.
 - Calendar picker component (a `<input type="date">` is sufficient for the v1 and avoids a dependency).
 - Custom range with time-of-day (date-only, end-of-day inferred for `to`).
+
+## Testing & Verification
+
+The project has no test framework and the user opted out of unit tests for the prior per-template-pricing feature. Verification here is the same pattern:
+
+- **`npm run build`** must pass with no new errors.
+- **`npx tsc --noEmit -p tsconfig.web.json`** error count must stay at the baseline (12 pre-existing errors, none in the changed files). Run before and after the change to confirm the count is unchanged.
+- **Manual smoke test** (added to `docs/HANDOFF.md` "Next Recommended Check"):
+  - [ ] Click each preset chip (Today / 7d / 30d / This month / All time) — confirm the summary cards and rollup tables recalculate, and the active chip is highlighted.
+  - [ ] Open the Custom range disclosure, set a from/to spanning a few days, click Apply — confirm the data updates and no chip is highlighted (now in "Custom" mode).
+  - [ ] Set `from > to` in the Custom panel — confirm the Apply button is disabled.
+  - [ ] Set one of the dates blank — confirm the Apply button is disabled.
+  - [ ] Pick a filter, close the app, reopen — confirm the same filter is restored.
+  - [ ] Confirm "All time" still works (no records filtered out, `fromTimestamp` is 0).
+  - [ ] Confirm the Cost tab's per-row pricing still resolves correctly (Cost tab uses the same snapshot, so no extra work needed; this is a regression check that the IPC change didn't break the existing snapshot shape).
