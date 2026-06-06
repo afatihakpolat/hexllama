@@ -61,6 +61,10 @@ function parseUsageCostDraft(draft: UsageCostDraft): UsageCostSettings {
   }
 }
 
+// Strict-group rule: a template either owns all three valid rates or falls back
+// entirely to the app-wide rates — there is no per-rate mixing. An explicit
+// { 0, 0, 0 } block is honored as a real override (a user hard-zeroing a template).
+// This parse path aligns with the main-process `normalizeTemplatePricing`.
 function parseTemplatePricingDraft(
   draft: TemplatePricingDraft
 ): NonNullable<Template['pricing']> {
@@ -100,6 +104,7 @@ export function PricingTab({ appSettings, onAppSettingsChange }: PricingTabProps
 
   const [appDraft, setAppDraft] = useState<UsageCostDraft>(createUsageCostDraft(appSettings))
   const [savingApp, setSavingApp] = useState(false)
+  const [appError, setAppError] = useState<string | null>(null)
   const [templateDrafts, setTemplateDrafts] = useState<Record<string, TemplatePricingDraft>>({})
   const [templateErrors, setTemplateErrors] = useState<Record<string, string | null>>({})
   const [savingTemplateId, setSavingTemplateId] = useState<string | null>(null)
@@ -110,6 +115,12 @@ export function PricingTab({ appSettings, onAppSettingsChange }: PricingTabProps
 
   useEffect(() => {
     setTemplateDrafts((current) => {
+      const cardIds = new Set(cards.map((c) => c.template.id))
+      const currentIds = Object.keys(current)
+      const allPresent = currentIds.length === cardIds.size && currentIds.every((id) => cardIds.has(id))
+      if (allPresent) {
+        return current
+      }
       const next: Record<string, TemplatePricingDraft> = {}
       for (const card of cards) {
         next[card.template.id] = current[card.template.id] ?? createTemplatePricingDraft(card.template)
@@ -132,12 +143,17 @@ export function PricingTab({ appSettings, onAppSettingsChange }: PricingTabProps
       const parsed = parseUsageCostDraft(appDraft)
       const result = await window.api.saveUsageCostSettings(parsed)
       if (!result.success) {
-        alert(`Failed to save app-wide pricing: ${result.error || 'Unknown error'}`)
+        const message = `Failed to save app-wide pricing: ${result.error || 'Unknown error'}`
+        setAppError(message)
+        alert(message)
         return
       }
+      setAppError(null)
       onAppSettingsChange(result.settings)
     } catch (saveError) {
-      alert(saveError instanceof Error ? saveError.message : String(saveError))
+      const message = saveError instanceof Error ? saveError.message : String(saveError)
+      setAppError(message)
+      alert(message)
     } finally {
       setSavingApp(false)
     }
@@ -161,13 +177,10 @@ export function PricingTab({ appSettings, onAppSettingsChange }: PricingTabProps
         nextTemplate = { ...template, pricing }
       } else {
         const { pricing: _removed, ...rest } = template
-        nextTemplate = rest as Template
+        nextTemplate = rest
       }
-      const result = await window.api.saveTemplate(nextTemplate as unknown as Record<string, unknown>)
-      if (!result || !result.id) {
-        throw new Error('Save returned no id')
-      }
-      updateCard(result.id, nextTemplate)
+      const { id } = await window.api.saveTemplate(nextTemplate)
+      updateCard(id, nextTemplate)
       setTemplateErrors((current) => ({ ...current, [template.id]: null }))
     } catch (saveError) {
       setTemplateErrors((current) => ({
@@ -180,7 +193,7 @@ export function PricingTab({ appSettings, onAppSettingsChange }: PricingTabProps
   }
 
   return (
-    <div className="pricing-tab">
+    <>
       <section className="usage-section">
         <div className="usage-section-header usage-section-header-stack">
           <div>
@@ -189,6 +202,7 @@ export function PricingTab({ appSettings, onAppSettingsChange }: PricingTabProps
           </div>
           <span>Default rates</span>
         </div>
+        {appError && <div className="usage-stats-warning">{appError}</div>}
         <div className="usage-cost-config-grid">
           <label className="usage-control-field">
             <span>Currency</span>
@@ -346,6 +360,6 @@ export function PricingTab({ appSettings, onAppSettingsChange }: PricingTabProps
           </div>
         )}
       </section>
-    </div>
+    </>
   )
 }

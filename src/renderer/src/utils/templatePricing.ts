@@ -1,20 +1,8 @@
 import type { Template, UsageCostSettings } from '../../../shared/types'
 
-export type { TemplatePricing } from '../../../shared/types'
-
-export interface ResolvedPricing {
-  currency: string
-  inputCostPerMillion: number
-  cacheCostPerMillion: number
-  outputCostPerMillion: number
-}
-
-const FALLBACK_PRICING: Omit<ResolvedPricing, 'currency'> = {
-  inputCostPerMillion: 0,
-  cacheCostPerMillion: 0,
-  outputCostPerMillion: 0
-}
-
+// Strict-group rule: a template either owns all three valid rates or falls back
+// entirely to the app-wide rates — there is no per-rate mixing. An explicit
+// { 0, 0, 0 } block is honored as a real override (a user hard-zeroing a template).
 function hasValidPricing(
   pricing: Template['pricing']
 ): pricing is NonNullable<Template['pricing']> {
@@ -30,7 +18,7 @@ function hasValidPricing(
 export function resolveTemplatePricing(
   template: Pick<Template, 'pricing'> | null | undefined,
   appSettings: UsageCostSettings
-): ResolvedPricing {
+): UsageCostSettings {
   if (template && hasValidPricing(template.pricing)) {
     return {
       currency: appSettings.currency,
@@ -45,9 +33,4 @@ export function resolveTemplatePricing(
     cacheCostPerMillion: appSettings.cacheCostPerMillion,
     outputCostPerMillion: appSettings.outputCostPerMillion
   }
-}
-
-export const EMPTY_PRICING: ResolvedPricing = {
-  currency: 'USD',
-  ...FALLBACK_PRICING
 }

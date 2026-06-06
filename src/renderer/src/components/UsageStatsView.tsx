@@ -378,6 +378,7 @@ export default function UsageStatsView() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [costSettingsError, setCostSettingsError] = useState<string | null>(null)
   const queryRef = useRef(query)
 
   queryRef.current = query
@@ -472,10 +473,14 @@ export default function UsageStatsView() {
     let cancelled = false
     void window.api.getUsageCostSettings()
       .then((next) => {
-        if (!cancelled) setAppSettings(next)
+        if (cancelled) return
+        setAppSettings(next)
+        setCostSettingsError(null)
       })
       .catch((loadError) => {
         console.warn('Failed to load app-wide usage cost settings:', loadError)
+        if (cancelled) return
+        setCostSettingsError(loadError instanceof Error ? loadError.message : String(loadError))
       })
     return () => {
       cancelled = true
@@ -492,6 +497,11 @@ export default function UsageStatsView() {
 
   return (
     <div className="usage-stats-page">
+      {costSettingsError && (
+        <div className="usage-stats-warning">
+          Cost settings failed to load: {costSettingsError}. The Cost tab will show zero-cost totals until the next successful load.
+        </div>
+      )}
       <div className="page-header usage-stats-header">
         <div>
           <h1 className="page-title">Usage Stats</h1>
