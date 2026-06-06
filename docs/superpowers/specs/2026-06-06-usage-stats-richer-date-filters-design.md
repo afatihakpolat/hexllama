@@ -102,6 +102,7 @@ The duplicated `getWindowStart` in `usageLedger.ts:113` and `usageSessions.ts:96
 - `src/main/usageLedger.ts` — delete `getWindowStart`; use `query.fromTimestamp`/`query.toTimestamp` directly.
 - `src/main/usageSessions.ts` — delete `getWindowStart`; update `getWindowedDailyRollups` signature; use `query.fromTimestamp`/`query.toTimestamp` directly.
 - `src/renderer/src/components/UsageStatsView.tsx` — add `UsageStatsWindow` local type, `WINDOW_OPTIONS`, `presetToRange` helper, custom-range panel JSX, `useEffect` dep changes, persistence `useState`/`useEffect` pair.
+- `src/renderer/src/components/Titlebar.tsx` — update the `getUsageStats({ window: 'all', limit: 1 })` call (line ~45) to use the new query shape. The simplest fix is to drop the `window` field and rely on the IPC handler's `fromTimestamp ?? 0` / `toTimestamp ?? Date.now()` defaults; an explicit `{ fromTimestamp: 0, toTimestamp: Date.now(), limit: 1 }` is also fine. (Missed in the original spec; surfaced during Task 1's tsc cascade.)
 - `src/renderer/src/styles/global.css` — add `.usage-stats-custom-range` styling (one small rule for the inline panel).
 - `docs/HANDOFF.md` — add completion line, verification line, and manual smoke test list.
 
